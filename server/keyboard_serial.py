@@ -100,6 +100,8 @@ class KeyboardSerial:
                         raw = self._serial.readline()
                         ack = raw.decode("utf-8", errors="ignore").strip()
                         logger.debug(f"KBM << {ack}")
+                        if ack and self._on_line:
+                            self._on_line(ack)
                         if ack in ("OK", "ERR"):
                             return ack
                         if ack.startswith("OK"):   # OK PONG など

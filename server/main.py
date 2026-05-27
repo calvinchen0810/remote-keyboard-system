@@ -458,6 +458,26 @@ async def ws_kbm(ws: WebSocket):
         await kbm_ws.disconnect(ws)
 
 
+@app.websocket("/ws/srv")
+async def ws_srv(ws: WebSocket):
+    await srv_ws.connect(ws)
+    await ws.send_text(json.dumps({
+        "type":     "status",
+        "channel":  "srv",
+        "state":    "idle" if srv_serial.is_connected else "disconnected",
+        "port":     srv_serial.port,
+        "attached": srv_serial.attached,
+    }, ensure_ascii=False))
+    try:
+        while True:
+            data = await ws.receive_text()
+            msg = json.loads(data)
+            if msg.get("type") == "ping":
+                await ws.send_text(json.dumps({"type": "pong", "channel": "srv"}))
+    except WebSocketDisconnect:
+        await srv_ws.disconnect(ws)
+
+
 # ═══════════════════════════════════════════════════════════════
 #  Routes: health + Webcam
 # ═══════════════════════════════════════════════════════════════
