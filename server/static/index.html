@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RKS — Remote Keyboard System</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0c;--panel:#111115;--card:#18181e;--inp:#1e1e26;--hov:#222230;
+  --bd:#2a2a38;--br:#3a3a50;
+  --grn:#22c55e;--grn2:#16a34a;--amb:#f59e0b;--red:#ef4444;--blu:#38bdf8;--pur:#a78bfa;
+  --fg:#e2e8f0;--fg2:#94a3b8;--fg3:#475569;
+  --mono:'Consolas','Courier New',monospace;--r:4px;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,sans-serif;font-size:12px}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-thumb{background:var(--br);border-radius:2px}
+button{font-family:'Segoe UI',sans-serif;font-size:11px;font-weight:600;letter-spacing:.3px;
+  border:1px solid var(--bd);border-radius:var(--r);background:var(--card);
+  color:var(--fg2);padding:3px 9px;cursor:pointer;transition:all .1s;text-transform:uppercase}
+button:hover:not(:disabled){background:var(--hov);border-color:var(--br);color:var(--fg)}
+button:active:not(:disabled){transform:scale(.97)}
+button:disabled{opacity:.3;cursor:not-allowed}
+.btn-g{background:rgba(34,197,94,.1);border-color:var(--grn2);color:var(--grn)}
+.btn-g:hover:not(:disabled){background:rgba(34,197,94,.2)}
+.btn-a{background:rgba(245,158,11,.1);border-color:#92400e;color:var(--amb)}
+.btn-a:hover:not(:disabled){background:rgba(245,158,11,.2)}
+.btn-r{background:rgba(239,68,68,.1);border-color:#7f1d1d;color:var(--red)}
+.btn-r:hover:not(:disabled){background:rgba(239,68,68,.2)}
+.btn-b{background:rgba(56,189,248,.08);border-color:#075985;color:var(--blu)}
+.btn-b:hover:not(:disabled){background:rgba(56,189,248,.15)}
+.btn-p{background:rgba(167,139,250,.1);border-color:#4c1d95;color:var(--pur)}
+.btn-p:hover:not(:disabled){background:rgba(167,139,250,.2)}
+.btn-sm{padding:2px 7px;font-size:10px}
+input,select,textarea{font-family:var(--mono);font-size:11px;background:var(--inp);color:var(--fg);
+  border:1px solid var(--bd);border-radius:var(--r);padding:2px 5px;outline:none;transition:border-color .1s}
+input:focus,select:focus,textarea:focus{border-color:var(--grn2)}
+input[type=number]{text-align:right}
+input[type=checkbox]{width:12px;height:12px;accent-color:var(--amb);cursor:pointer}
+input[type=radio]{accent-color:var(--blu);cursor:pointer}
+input[type=range]{height:4px;background:var(--bd);border:none;border-radius:2px;
+  -webkit-appearance:none;appearance:none;cursor:pointer;outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--grn)}
+.pn{background:var(--panel);border:1px solid var(--bd);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column}
+.ph{font-family:var(--mono);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--fg2);
+  background:var(--card);padding:5px 8px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:5px;flex-shrink:0}
+.ph::before{content:'//';color:var(--fg3)}
+
+/* layout */
+#app{display:flex;flex-direction:column;height:100vh}
+#topbar{display:flex;align-items:center;gap:6px;padding:0 10px;height:42px;
+  background:var(--panel);border-bottom:1px solid var(--bd);flex-shrink:0}
+#logo{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--grn);letter-spacing:2px;white-space:nowrap}
+.tbsep{width:1px;height:14px;background:var(--bd);flex-shrink:0;margin:0 2px}
+.led{width:7px;height:7px;border-radius:50%;flex-shrink:0;transition:all .3s}
+.led-grn{background:var(--grn);box-shadow:0 0 5px var(--grn)}
+.led-amb{background:var(--amb);box-shadow:0 0 5px var(--amb);animation:pulse 1s infinite}
+.led-dim{background:var(--fg3)}
+.tb-grp{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.tb-grp-lbl{font-family:var(--mono);font-size:9px;letter-spacing:.8px;white-space:nowrap}
+.tbsel{width:108px;font-size:10px}
+#sp{flex:1}
+#body{display:flex;flex:1;overflow:hidden;min-height:0;padding:6px;gap:6px}
+
+/* columns */
+#left-col{width:190px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}
+#mid-col{display:flex;flex-direction:column;gap:6px;overflow:hidden;min-width:300px}
+#drag-handle{width:5px;flex-shrink:0;cursor:col-resize;background:transparent;border-radius:2px;position:relative;z-index:10;transition:background .15s}
+#drag-handle:hover,#drag-handle.dragging{background:var(--grn2)}
+#drag-handle::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:1px;height:40px;background:var(--br);border-radius:1px}
+#script-col{display:flex;flex-direction:column;overflow:hidden;min-width:250px}
+#right-col{width:220px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}
+
+/* left */
+.srv-list{overflow:hidden}
+.srv-row{display:flex;align-items:center;gap:4px;padding:3px 8px;border-bottom:1px solid var(--bd);height:28px}
+.srv-row:hover{background:var(--hov)}
+.srv-id{font-family:var(--mono);font-size:10px;color:var(--fg2);width:20px;flex-shrink:0}
+.srv-dot{font-size:10px;color:var(--fg3);flex-shrink:0}.srv-dot.on{color:var(--grn)}
+.srv-pin{width:34px;font-size:10px;padding:1px 3px;text-align:center}
+.srv-pin.att{background:transparent;border-color:transparent;color:var(--grn)}
+.bulk-row{display:flex;gap:5px;padding:5px 8px;border-top:1px solid var(--bd);flex-shrink:0}
+#sst-body{padding:6px 8px}
+#sst-canvas-row{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+#home-desc{font-family:var(--mono);font-size:9px;line-height:1.6;color:var(--grn)}
+.sst-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-bottom:5px}
+.sst-f{display:flex;flex-direction:column;gap:1px}
+.sst-lbl{font-family:var(--mono);font-size:8px;color:var(--fg3);letter-spacing:.4px}
+.pop-inp{cursor:pointer !important}
+.pop-inp:hover{background:var(--hov)!important;border-color:var(--grn2)!important}
+.home-sw{position:relative;display:inline-block;width:32px;height:16px;vertical-align:middle}
+.home-sw input{opacity:0;width:0;height:0;position:absolute}
+.home-sl{position:absolute;inset:0;cursor:pointer;background:var(--inp);border:1px solid var(--bd);border-radius:999px;transition:.15s}
+.home-sl:before{content:'';position:absolute;left:2px;top:2px;width:10px;height:10px;border-radius:50%;background:var(--fg3);transition:.15s}
+.home-sw input:checked+.home-sl{background:rgba(34,197,94,.2);border-color:var(--grn2)}
+.home-sw input:checked+.home-sl:before{transform:translateX(16px);background:var(--grn)}
+.home-mk{font-family:var(--mono);font-size:10px;color:var(--fg2);margin-left:3px}
+#sst-btns{display:flex;gap:4px}
+
+/* mid */
+#cam-panel{flex:1;display:flex;flex-direction:column;min-height:0}
+#cam-box{flex:1;background:#060608;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:0}
+.cam-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(56,189,248,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(56,189,248,.03) 1px,transparent 1px);background-size:20px 20px}
+#cam-tag{position:absolute;top:5px;left:7px;font-family:var(--mono);font-size:9px;color:#22d3ee;letter-spacing:.1em}
+#cam-live{position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--grn);display:none}
+#cam-img{width:100%;height:100%;object-fit:cover;display:none}
+#cam-offline{color:#1e3a4a;font-family:var(--mono);font-size:10px;display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column;gap:8px}
+#txt-panel{flex-shrink:0}
+#txt-area{display:block;width:calc(100% - 16px);margin:5px 8px 2px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:4px 6px;font-family:var(--mono);font-size:10px;resize:none;height:36px;outline:none}
+#sck-row{display:flex;gap:3px;flex-wrap:wrap;padding:3px 8px 5px}
+.sck{font-size:10px;font-weight:600;border:1px solid var(--bd);border-radius:var(--r);background:var(--card);color:var(--fg2);padding:2px 6px;cursor:pointer;white-space:nowrap}
+.sck:hover{background:var(--hov);color:var(--fg)}
+
+/* script */
+#script-col{background:var(--panel);border:1px solid var(--bd);border-radius:var(--r)}
+#script-tb{display:flex;align-items:center;gap:4px;padding:5px 7px;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--card);flex-wrap:wrap;row-gap:3px}
+#tbl-wrap{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0}
+#empty-hint{padding:14px;text-align:center;color:var(--fg3);font-family:var(--mono);font-size:10px}
+.stbl{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;table-layout:fixed}
+.stbl thead th{position:sticky;top:0;z-index:1;background:var(--card);color:var(--fg3);font-size:9px;letter-spacing:.8px;padding:3px 3px;text-align:left;border-bottom:1px solid var(--br);font-weight:normal}
+.stbl tbody tr{border-bottom:1px solid var(--bd);cursor:grab}
+.stbl tbody tr:hover{background:var(--hov)}
+.stbl tbody tr.drag-over{border-top:2px solid var(--grn2)}
+.stbl td{padding:2px 2px;vertical-align:middle}
+.badge{display:inline-flex;align-items:center;padding:1px 4px;border-radius:2px;font-size:9px;font-weight:600}
+.b-srv{background:rgba(245,158,11,.12);color:#d97706;border:1px solid rgba(245,158,11,.3)}
+.b-kbd{background:rgba(167,139,250,.12);color:#8b5cf6;border:1px solid rgba(167,139,250,.3)}
+.b-mse{background:rgba(239,68,68,.1);color:#f87171;border:1px solid rgba(239,68,68,.25)}
+.ti{font-family:var(--mono);font-size:10px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:1px 3px;text-align:center}
+.ti:hover{border-color:var(--grn2)}
+.ti-s{font-family:var(--mono);font-size:10px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:1px 2px}
+.drag-col{color:var(--fg3);text-align:center;font-size:11px;width:12px;cursor:grab}
+.del-btn{background:none;border:none;color:var(--fg3);padding:1px 3px;font-size:11px;cursor:pointer}
+.del-btn:hover{color:var(--red)}
+#sc-prog-row{display:flex;align-items:center;gap:5px;padding:4px 7px;border-top:1px solid var(--bd);flex-shrink:0;background:var(--card)}
+.prog-tr{flex:1;height:3px;background:var(--inp);border-radius:2px;overflow:hidden}
+.prog-fi{height:100%;background:var(--grn);width:0%;transition:width .3s}
+
+/* right */
+.pn-nums{display:flex;align-items:baseline;gap:3px;padding:6px 10px 2px}
+.pn-cur{font-family:var(--mono);font-size:24px;color:var(--grn);line-height:1}
+.pn-sep{color:var(--fg3);font-size:13px}
+.pn-tot{font-family:var(--mono);font-size:17px;color:var(--fg2)}
+.pn-pct{font-family:var(--mono);font-size:11px;color:var(--grn2);margin-left:auto}
+.pn-trk{height:3px;background:var(--inp);margin:0 10px 4px;border-radius:2px;overflow:hidden}
+.pn-fill{height:100%;background:var(--grn);width:0%;transition:width .3s}
+.pn-msg{padding:0 10px 6px;font-family:var(--mono);font-size:9px;color:var(--blu)}
+#smon{flex:1;display:flex;flex-direction:column;min-height:0}
+.smon-tabs{display:flex;align-items:center;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--card)}
+.smon-tab{font-family:var(--mono);font-size:10px;padding:5px 10px;cursor:pointer;color:var(--fg3);border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+.smon-tab.a-srv{color:var(--amb);border-bottom-color:var(--amb)}
+.smon-tab.a-kbm{color:var(--blu);border-bottom-color:var(--blu)}
+.sout{flex:1;overflow-y:auto;padding:4px 8px;font-family:var(--mono);font-size:10px;line-height:1.65;min-height:0}
+.sout.hidden{display:none}
+.sl{display:flex;gap:6px}
+.sts{color:var(--fg3);font-size:9px;line-height:1.8;flex-shrink:0}
+.cok{color:var(--grn)}.crun{color:var(--amb)}.cerr{color:var(--red)}.csnd{color:var(--blu)}.cdim{color:var(--fg2)}.catt{color:#a3e635}
+#man-row{display:flex;align-items:center;gap:4px;padding:4px 8px;border-top:1px solid var(--bd);flex-shrink:0}
+#quick-btns{display:flex;gap:4px;padding:5px 8px}
+#prog-badge{font-family:var(--mono);font-size:9px;color:var(--amb);border:1px solid var(--amb);padding:1px 4px;border-radius:2px;margin-left:5px;display:none;animation:pulse 1.5s infinite}
+
+/* keyboard fixed bottom */
+#kb-panel{background:var(--panel);border-top:1px solid var(--br);flex-shrink:0}
+#kb-hdr{display:flex;align-items:center;gap:8px;padding:5px 10px;background:var(--card);border-bottom:1px solid var(--bd)}
+#kb-hdr-title{font-family:var(--mono);font-size:10px;letter-spacing:1px;color:var(--fg2)}
+#kb-hdr-title::before{content:'// ';color:var(--fg3)}
+#kb-body{padding:6px 10px 8px;display:flex;gap:10px;align-items:flex-end;justify-content:center}
+#kb-main{display:flex;flex-direction:column;gap:3px}
+.kr{display:flex;gap:3px}
+.k{height:26px;width:30px;padding:0;font-size:9px;font-weight:600;background:var(--card);border:1px solid var(--bd);border-bottom:2px solid #07070a;border-radius:3px;display:flex;align-items:center;justify-content:center;color:var(--fg);cursor:pointer;font-family:var(--mono);flex-shrink:0;transition:background .08s}
+.k:hover{background:var(--hov);border-color:var(--br)}
+.k:active{transform:translateY(1px);border-bottom-width:1px}
+.k.kesc{color:var(--red);border-color:#3a1a25}
+.k.kmod{color:var(--blu);border-color:#075985}
+.k.kmod.act{background:rgba(56,189,248,.15);box-shadow:0 0 0 1px var(--blu)}
+.k.kenter{color:var(--blu);border-color:#075985}
+.w15{width:46px}.w2{width:63px}.w25{width:80px}.w3{width:97px}.wsp{width:190px}
+.arr-col{display:flex;flex-direction:column;gap:3px;align-items:center;align-self:flex-end}
+.arr-bot{display:flex;gap:3px}
+#kb-div{width:1px;background:var(--br);align-self:stretch;flex-shrink:0}
+
+/* mouse panel */
+#mouse-panel{display:flex;flex-direction:column;gap:6px;align-self:center;min-width:145px}
+.mp-lbl{font-family:var(--mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--fg3)}
+.mp-lbl::before{content:'// ';color:var(--fg3)}
+.dpad{display:flex;flex-direction:column;align-items:center;gap:2px}
+.dpad-mid{display:flex;gap:2px;align-items:center}
+.mk{height:28px;width:28px;background:var(--card);border:1px solid var(--bd);border-bottom:2px solid #07070a;border-radius:3px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;color:var(--fg2);transition:background .08s;flex-shrink:0}
+.mk:hover{background:var(--hov);border-color:var(--br);color:var(--fg)}
+.mk:active{transform:translateY(1px);border-bottom-width:1px}
+.mk-c{width:28px;height:28px;background:var(--inp);border:1px solid var(--bd);border-radius:3px;display:flex;align-items:center;justify-content:center}
+.mk-dot{width:4px;height:4px;background:var(--fg3);border-radius:50%}
+.step-lbl{display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
+.step-lbl span{font-family:var(--mono);font-size:9px;color:var(--fg3)}
+#step-val{width:36px;text-align:center;padding:1px 3px;font-size:10px}
+.click-mode{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.click-mode label{font-family:var(--mono);font-size:10px;color:var(--fg2);display:flex;align-items:center;gap:3px;cursor:pointer}
+.click-btns{display:flex;gap:3px}
+.mb-l{font-size:10px;font-weight:600;border:1px solid var(--grn2);border-radius:var(--r);background:rgba(34,197,94,.1);color:var(--grn);padding:3px 0;cursor:pointer;flex:1;text-align:center}
+.mb-m{font-size:10px;font-weight:600;border:1px solid var(--br);border-radius:var(--r);background:var(--card);color:var(--fg2);padding:3px 0;cursor:pointer;flex:1;text-align:center}
+.mb-r{font-size:10px;font-weight:600;border:1px solid #7f1d1d;border-radius:var(--r);background:rgba(239,68,68,.08);color:var(--red);padding:3px 0;cursor:pointer;flex:1;text-align:center}
+
+/* popover */
+.pop{position:fixed;background:var(--card);border:1px solid var(--br);border-radius:var(--r);padding:10px;box-shadow:0 8px 20px rgba(0,0,0,.5);z-index:9999;display:none;flex-direction:column;gap:7px;min-width:190px}
+.pop.show{display:flex}
+.pop-title{font-family:var(--mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--fg2)}
+.pop-row{display:flex;align-items:center;gap:7px}
+.pop-row input[type=range]{flex:1}
+.pop-num{width:72px;text-align:center;padding:3px 5px;font-size:11px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- Topbar -->
+<div id="topbar">
+  <span id="logo">RKS</span>
+  <div class="tbsep"></div>
+  <div class="led led-dim" id="cam-led"></div>
+  <span style="font-family:var(--mono);font-size:10px;color:var(--fg2)">CAM</span>
+  <div class="tbsep"></div>
+  <div class="tb-grp">
+    <span class="tb-grp-lbl" style="color:var(--amb)">SRV</span>
+    <div class="led led-dim" id="srv-led"></div>
+    <select class="tbsel" id="srv-port-sel"><option value="">— select port —</option></select>
+    <button class="btn-g btn-sm" id="srv-conn-btn" onclick="srvToggleConnect()">CONNECT</button>
+  </div>
+  <div class="tbsep"></div>
+  <div class="tb-grp">
+    <span class="tb-grp-lbl" style="color:var(--blu)">KBM</span>
+    <div class="led led-dim" id="kbm-led"></div>
+    <select class="tbsel" id="kbm-port-sel"><option value="">— select port —</option></select>
+    <button class="btn-b btn-sm" id="kbm-conn-btn" onclick="kbmToggleConnect()">CONNECT</button>
+  </div>
+  <div id="sp"></div>
+  <a href="/arch" target="_blank" style="font-family:var(--mono);font-size:9px;color:var(--fg3);text-decoration:none;padding:2px 6px;border:1px solid var(--bd);border-radius:var(--r)">ARCH</a>
+</div>
+
+<!-- Body -->
+<div id="body">
+
+<!-- LEFT: Servo Manager + Single Step -->
+<div id="left-col">
+
+  <div class="pn" style="flex-shrink:0">
+    <div class="ph">Servo Manager
+      <span id="srv-attach-cnt" style="font-size:9px;color:var(--grn2);background:rgba(34,197,94,.08);border:1px solid var(--bd);padding:1px 4px;border-radius:2px">0/6</span>
+    </div>
+    <div class="srv-list" id="servo-list"></div>
+    <div class="bulk-row">
+      <button class="btn-g btn-sm" style="flex:1" onclick="srvAttachAll()">ATTACH ALL</button>
+      <button class="btn-r btn-sm" style="flex:1" onclick="srvDetachAll()">DETACH ALL</button>
+    </div>
+  </div>
+
+  <div class="pn" style="flex-shrink:0">
+    <div class="ph">Single Step</div>
+    <div id="sst-body">
+      <div id="sst-canvas-row">
+        <canvas id="srv-canvas" width="76" height="70"></canvas>
+        <div id="home-desc">home=1<br>Return to 0°</div>
+      </div>
+      <div class="sst-grid">
+        <div class="sst-f"><span class="sst-lbl">DELAY ms</span>
+          <input type="number" class="pop-inp" id="ss-delay" value="1000" min="0" max="30000" step="500"></div>
+        <div class="sst-f"><span class="sst-lbl">SID</span>
+          <select id="ss-sid" style="font-family:var(--mono);font-size:11px;color:var(--amb);font-weight:bold;background:var(--inp);border:1px solid var(--bd);border-radius:var(--r);padding:2px 3px;width:100%;outline:none">
+            <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option>
+          </select></div>
+        <div class="sst-f"><span class="sst-lbl">ANGLE °</span>
+          <input type="number" class="pop-inp" id="ss-angle" value="15" min="0" max="180" oninput="drawCanvas()"></div>
+        <div class="sst-f"><span class="sst-lbl">SPEED</span>
+          <input type="number" class="pop-inp" id="ss-speed" value="50" min="1" max="100"></div>
+        <div class="sst-f"><span class="sst-lbl">HOLD ms</span>
+          <input type="number" class="pop-inp" id="ss-dur" value="300" min="0" max="10000" step="100"></div>
+        <div class="sst-f"><span class="sst-lbl">HOME</span>
+          <div style="display:flex;align-items:center;margin-top:3px">
+            <label class="home-sw"><input type="checkbox" id="ss-home" checked onchange="setHome(this.checked?1:0)"><span class="home-sl"></span></label>
+            <span class="home-mk" id="ss-home-mk">1</span>
+          </div>
+        </div>
+      </div>
+      <div id="sst-btns">
+        <button class="btn-g btn-sm" onclick="sendStep()">▶ Send</button>
+        <button class="btn-sm" onclick="previewStep()">Preview</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:1"></div>
+</div>
+
+<!-- MID -->
+<div id="mid-col">
+  <div class="pn" style="flex:1;min-height:0" id="cam-panel">
+    <div class="ph">Webcam <span id="cam-res" style="font-size:9px;color:var(--grn2)"></span></div>
+    <div id="cam-box">
+      <div class="cam-grid"></div>
+      <span id="cam-tag">LIVE ●</span>
+      <div id="cam-live"></div>
+      <img id="cam-img" src="/stream" onerror="camError()" onload="camLoaded()">
+      <div id="cam-offline"><span style="font-size:1.8rem;opacity:.2">⬛</span><span>CAMERA OFFLINE</span></div>
+    </div>
+  </div>
+  <div class="pn" id="txt-panel" style="flex-shrink:0">
+    <div class="ph">Text Input
+      <span id="kb-lock-lbl" style="font-size:9px;color:var(--fg3);display:none">— locked</span>
+    </div>
+    <textarea id="txt-area" placeholder="Type text... (Enter to send)"></textarea>
+    <div id="sck-row">
+      <button class="sck" onclick="kbmSend('COMBO:CTRL+C')">CTRL+C</button>
+      <button class="sck" onclick="kbmSend('COMBO:CTRL+V')">CTRL+V</button>
+      <button class="sck" onclick="kbmSend('COMBO:CTRL+Z')">CTRL+Z</button>
+      <button class="sck" onclick="kbmSend('COMBO:CTRL+A')">CTRL+A</button>
+      <button class="sck" onclick="kbmSend('COMBO:CTRL+S')">CTRL+S</button>
+      <button class="sck" onclick="kbmSend('COMBO:ALT+TAB')">ALT+TAB</button>
+      <button class="sck" onclick="kbmSend('COMBO:GUI+D')">WIN+D</button>
+      <button class="sck" style="color:var(--red);border-color:#7f1d1d" onclick="kbmSend('RELEASEALL')">⚠ RELEASE</button>
+    </div>
+  </div>
+</div>
+
+<!-- DRAG HANDLE -->
+<div id="drag-handle"></div>
+
+<!-- SCRIPT COL -->
+<div id="script-col" class="pn">
+  <div class="ph">Script Editor
+    <span id="step-cnt" style="font-size:9px;color:var(--grn2);background:rgba(34,197,94,.08);border:1px solid var(--bd);padding:1px 4px;border-radius:2px;margin-left:2px">0 STEPS</span>
+  </div>
+  <div id="script-tb">
+    <div style="display:flex;align-items:center;gap:3px;font-family:var(--mono);font-size:9px;color:var(--fg3)">
+      ms:<input type="number" id="default-delay" value="1000" min="0" max="30000" step="500"
+           style="width:52px;padding:2px 4px" class="pop-inp" onclick="showDelayPop(this)">
+    </div>
+    <div style="width:1px;height:12px;background:var(--bd);margin:0 2px"></div>
+    <button class="btn-a btn-sm" onclick="addSrvStep()">＋ SRV</button>
+    <button class="btn-p btn-sm" onclick="addKbdStep()">＋ KBD</button>
+    <button class="btn-r btn-sm" onclick="addMseStep()">＋ MSE</button>
+    <div style="width:1px;height:12px;background:var(--bd);margin:0 2px"></div>
+    <label style="font-family:var(--mono);font-size:10px;color:var(--fg2);display:flex;align-items:center;gap:3px">
+      <input type="checkbox" id="loop-cb" style="accent-color:var(--amb)"> Loop
+    </label>
+    <button class="btn-sm" onclick="importJSON()">Import</button>
+    <button class="btn-sm" onclick="exportJSON()">Export</button>
+    <button class="btn-g btn-sm" id="run-btn" onclick="runScript()">▶ RUN</button>
+    <button class="btn-r btn-sm" onclick="stopScript()">■ STOP</button>
+  </div>
+  <div id="tbl-wrap">
+    <table class="stbl">
+      <thead><tr>
+        <th style="width:12px"></th>
+        <th style="width:28px">TYPE</th>
+        <th style="width:46px">DELAY</th>
+        <th>PARAMS</th>
+        <th style="width:16px"></th>
+      </tr></thead>
+      <tbody id="steps-tbody"></tbody>
+    </table>
+    <div id="empty-hint">// no steps yet — ＋ SRV uses current Single Step values</div>
+  </div>
+  <div id="sc-prog-row">
+    <span id="sc-prog-lbl" style="font-family:var(--mono);font-size:9px;color:var(--grn);white-space:nowrap">0 / 0</span>
+    <div class="prog-tr"><div class="prog-fi" id="sc-prog-fi"></div></div>
+    <span id="sc-prog-step" style="font-family:var(--mono);font-size:9px;color:var(--blu);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis"></span>
+  </div>
+</div>
+
+<!-- RIGHT: Progress + Serial Monitor + Quick Commands -->
+<div id="right-col">
+
+  <div class="pn" style="flex-shrink:0">
+    <div class="ph">Progress</div>
+    <div class="pn-nums">
+      <span class="pn-cur" id="prog-cur">—</span>
+      <span class="pn-sep">/</span>
+      <span class="pn-tot" id="prog-tot">—</span>
+      <span id="prog-badge">RUNNING</span>
+      <span class="pn-pct" id="prog-pct"></span>
+    </div>
+    <div class="pn-trk"><div class="pn-fill" id="prog-fill"></div></div>
+    <div class="pn-msg" id="prog-msg">Idle</div>
+  </div>
+
+  <div class="pn" id="smon" style="flex:1;min-height:0">
+    <div class="smon-tabs">
+      <div class="smon-tab a-srv" id="tab-srv" onclick="switchLog('srv')">SRV</div>
+      <div class="smon-tab" id="tab-kbm" onclick="switchLog('kbm')">KBM</div>
+      <div style="margin-left:auto;padding:0 5px">
+        <input id="log-filter" placeholder="filter" style="width:50px;font-size:9px;padding:1px 4px" oninput="renderLog()">
+      </div>
+    </div>
+    <div class="sout" id="sout-srv"></div>
+    <div class="sout hidden" id="sout-kbm"></div>
+    <div id="man-row">
+      <span id="man-pfx" style="font-family:var(--mono);font-size:11px;color:var(--amb)">>></span>
+      <input id="man-inp" style="flex:1;font-size:10px" placeholder="command..."
+             onkeydown="if(event.key==='Enter')manualSend()">
+      <button class="btn-sm" onclick="manualSend()">Send</button>
+    </div>
+  </div>
+
+  <!-- Quick Commands — bottom of right col -->
+  <div class="pn" style="flex-shrink:0">
+    <div class="ph">Quick Commands</div>
+    <div id="quick-btns">
+      <button class="btn-b btn-sm" onclick="srvRaw('PING')">PING</button>
+      <button class="btn-a btn-sm" onclick="srvRaw('STATUS')">STATUS</button>
+      <button class="btn-r btn-sm" onclick="stopScript()">STOP</button>
+    </div>
+  </div>
+
+</div>
+</div><!-- /body -->
+
+<!-- KEYBOARD + MOUSE fixed bottom -->
+<div id="kb-panel">
+  <div id="kb-hdr">
+    <span id="kb-hdr-title">Keyboard &amp; Mouse</span>
+    <span id="kb-lock-msg" style="font-family:var(--mono);font-size:9px;color:var(--fg3);margin-left:6px;display:none">— locked during script run</span>
+    <div style="flex:1"></div>
+    <div id="mod-indicators" style="display:flex;gap:4px"></div>
+  </div>
+  <div id="kb-body">
+    <div id="kb-main">
+      <div class="kr">
+        <div class="k kesc w15" data-key="KEY:ESC">ESC</div>
+        <div style="width:7px"></div>
+        <div class="k" data-key="KEY:F1">F1</div><div class="k" data-key="KEY:F2">F2</div>
+        <div class="k" data-key="KEY:F3">F3</div><div class="k" data-key="KEY:F4">F4</div>
+        <div style="width:5px"></div>
+        <div class="k" data-key="KEY:F5">F5</div><div class="k" data-key="KEY:F6">F6</div>
+        <div class="k" data-key="KEY:F7">F7</div><div class="k" data-key="KEY:F8">F8</div>
+        <div style="width:5px"></div>
+        <div class="k" data-key="KEY:F9">F9</div><div class="k" data-key="KEY:F10">F10</div>
+        <div class="k" data-key="KEY:F11">F11</div><div class="k" data-key="KEY:F12">F12</div>
+      </div>
+      <div class="kr">
+        <div class="k" data-key="TYPE:`">`</div>
+        <div class="k" data-key="TYPE:1">1</div><div class="k" data-key="TYPE:2">2</div>
+        <div class="k" data-key="TYPE:3">3</div><div class="k" data-key="TYPE:4">4</div>
+        <div class="k" data-key="TYPE:5">5</div><div class="k" data-key="TYPE:6">6</div>
+        <div class="k" data-key="TYPE:7">7</div><div class="k" data-key="TYPE:8">8</div>
+        <div class="k" data-key="TYPE:9">9</div><div class="k" data-key="TYPE:0">0</div>
+        <div class="k" data-key="TYPE:-">-</div><div class="k" data-key="TYPE:=">=</div>
+        <div class="k w25" data-key="KEY:BACKSPACE">BKSP</div>
+      </div>
+      <div class="kr">
+        <div class="k w15" data-key="KEY:TAB">TAB</div>
+        <div class="k" data-key="TYPE:q">Q</div><div class="k" data-key="TYPE:w">W</div>
+        <div class="k" data-key="TYPE:e">E</div><div class="k" data-key="TYPE:r">R</div>
+        <div class="k" data-key="TYPE:t">T</div><div class="k" data-key="TYPE:y">Y</div>
+        <div class="k" data-key="TYPE:u">U</div><div class="k" data-key="TYPE:i">I</div>
+        <div class="k" data-key="TYPE:o">O</div><div class="k" data-key="TYPE:p">P</div>
+        <div class="k" data-key="TYPE:[">[</div><div class="k" data-key="TYPE:]">]</div>
+        <div class="k w15" data-key="TYPE:\">\</div>
+      </div>
+      <div class="kr">
+        <div class="k w2" data-key="KEY:CAPSLOCK">CAPS</div>
+        <div class="k" data-key="TYPE:a">A</div><div class="k" data-key="TYPE:s">S</div>
+        <div class="k" data-key="TYPE:d">D</div><div class="k" data-key="TYPE:f">F</div>
+        <div class="k" data-key="TYPE:g">G</div><div class="k" data-key="TYPE:h">H</div>
+        <div class="k" data-key="TYPE:j">J</div><div class="k" data-key="TYPE:k">K</div>
+        <div class="k" data-key="TYPE:l">L</div>
+        <div class="k" data-key="TYPE:;">;</div><div class="k" data-key="TYPE:'">'</div>
+        <div class="k kenter w25" data-key="KEY:ENTER">ENTER</div>
+      </div>
+      <div class="kr">
+        <div class="k kmod w25" id="kb-shift" data-mod="SHIFT">SHIFT</div>
+        <div class="k" data-key="TYPE:z">Z</div><div class="k" data-key="TYPE:x">X</div>
+        <div class="k" data-key="TYPE:c">C</div><div class="k" data-key="TYPE:v">V</div>
+        <div class="k" data-key="TYPE:b">B</div><div class="k" data-key="TYPE:n">N</div>
+        <div class="k" data-key="TYPE:m">M</div>
+        <div class="k" data-key="TYPE:,">,</div><div class="k" data-key="TYPE:.">.</div>
+        <div class="k" data-key="TYPE:/">/</div>
+        <div class="k kmod w25" data-mod="SHIFT">SHIFT</div>
+      </div>
+      <div class="kr">
+        <div class="k kmod w15" id="kb-ctrl" data-mod="CTRL">CTRL</div>
+        <div class="k kmod" id="kb-win" data-mod="GUI">WIN</div>
+        <div class="k kmod w15" id="kb-alt" data-mod="ALT">ALT</div>
+        <div class="k wsp" data-key="TYPE: ">SPACE</div>
+        <div class="k kmod w15" data-mod="ALT">ALT</div>
+        <div class="k kmod w15" data-mod="CTRL">CTRL</div>
+      </div>
+    </div>
+    <div class="arr-col">
+      <div class="k" data-key="KEY:UP">↑</div>
+      <div class="arr-bot">
+        <div class="k" data-key="KEY:LEFT">←</div>
+        <div class="k" data-key="KEY:DOWN">↓</div>
+        <div class="k" data-key="KEY:RIGHT">→</div>
+      </div>
+    </div>
+    <div id="kb-div"></div>
+    <div id="mouse-panel">
+      <div class="mp-lbl">Mouse</div>
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <div class="dpad">
+          <div class="mk" id="mk-up">↑</div>
+          <div class="dpad-mid">
+            <div class="mk" id="mk-left">←</div>
+            <div class="mk-c"><div class="mk-dot"></div></div>
+            <div class="mk" id="mk-right">→</div>
+          </div>
+          <div class="mk" id="mk-down">↓</div>
+        </div>
+        <div style="flex:1;min-width:78px">
+          <div class="step-lbl"><span>STEP px</span>
+            <input id="step-val" type="number" value="10" min="1" max="200"
+                   oninput="document.getElementById('step-slider').value=this.value">
+          </div>
+          <input id="step-slider" type="range" min="1" max="200" value="10" style="width:100%"
+                 oninput="document.getElementById('step-val').value=this.value">
+          <div style="display:flex;justify-content:space-between;margin-top:1px">
+            <span style="font-family:var(--mono);font-size:8px;color:var(--fg3)">1</span>
+            <span style="font-family:var(--mono);font-size:8px;color:var(--fg3)">200</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="click-mode">
+          <label><input type="radio" name="cm" value="single" checked> <span>Single</span></label>
+          <label><input type="radio" name="cm" value="double"> <span>Double</span></label>
+        </div>
+        <div class="click-btns">
+          <button class="mb-l" onclick="mouseClick('L')">L</button>
+          <button class="mb-m" onclick="mouseClick('M')">M</button>
+          <button class="mb-r" onclick="mouseClick('R')">R</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /app -->
+
+<input type="file" id="file-input" accept=".json" style="display:none" onchange="handleImport(event)">
+<div class="pop" id="pop">
+  <div class="pop-title" id="pop-lbl"></div>
+  <div class="pop-row">
+    <input type="range" id="pop-range">
+    <input type="number" class="pop-num" id="pop-num">
+  </div>
+</div>
+
+<script>
+const MAX_SRV=6, DEF_PINS=[9,10,11,6,5,3];
+let srvState='disc', kbmState='disc';
+let attachedMap={}, pinSettings=[...DEF_PINS];
+let srvWS=null, kbmWS=null;
+let logLines={srv:[],kbm:[]}, activeLog='srv';
+let steps=[], stepIdCnt=0, dragSrc=null;
+let kbLocked=false, modState={CTRL:false,SHIFT:false,ALT:false,GUI:false};
+let homeVal=1;
+
+// ── Drag resize ──────────────────────────────────────────────
+(()=>{
+  const h=document.getElementById('drag-handle');
+  const m=document.getElementById('mid-col');
+  const s=document.getElementById('script-col');
+  let d=false,sx=0,smw=0,ssw=0;
+  h.addEventListener('mousedown',e=>{d=true;sx=e.clientX;smw=m.offsetWidth;ssw=s.offsetWidth;h.classList.add('dragging');e.preventDefault();});
+  document.addEventListener('mousemove',e=>{if(!d)return;const dx=e.clientX-sx;m.style.flex='none';m.style.width=Math.max(300,smw+dx)+'px';s.style.flex='none';s.style.width=Math.max(250,ssw-dx)+'px';});
+  document.addEventListener('mouseup',()=>{if(d){d=false;h.classList.remove('dragging');}});
+})();
+
+// ── Popover ──────────────────────────────────────────────────
+let popTarget=null;
+function showPop(inp,title,mn,mx,stp,rev=false){
+  const pop=document.getElementById('pop');
+  const pr=document.getElementById('pop-range'),pn=document.getElementById('pop-num');
+  document.getElementById('pop-lbl').textContent=title;
+  const v=parseInt(inp.value)||mn;
+  pr.min=mn;pr.max=mx;pr.step=stp;pr.value=v;pr.style.direction=rev?'rtl':'ltr';
+  pn.min=mn;pn.max=mx;pn.step=stp;pn.value=v;popTarget=inp;
+  const r=inp.getBoundingClientRect();
+  let l=r.left,t=r.top-74;
+  if(l+200>window.innerWidth-8)l=window.innerWidth-208;
+  if(t<4)t=r.bottom+4;
+  pop.style.left=l+'px';pop.style.top=t+'px';pop.classList.add('show');
+  const sync=v=>{let n=Math.max(mn,Math.min(mx,parseInt(v)||mn));if(stp>1)n=Math.round(n/stp)*stp;pr.value=n;pn.value=n;inp.value=n;if(inp.id==='ss-angle')drawCanvas();};
+  pr.oninput=()=>sync(pr.value);pn.oninput=()=>sync(pn.value);
+  setTimeout(()=>{const c=e=>{if(!pop.contains(e.target)&&e.target!==popTarget){pop.classList.remove('show');document.removeEventListener('click',c);}};document.addEventListener('click',c);},0);
+}
+function showDelayPop(inp){showPop(inp,'DEFAULT DELAY ms',0,30000,500);}
+[{id:'ss-delay',a:['DELAY ms',0,30000,500]},{id:'ss-angle',a:['ANGLE °',0,180,1,true]},
+ {id:'ss-speed',a:['SPEED',1,100,1]},{id:'ss-dur',a:['HOLD ms',0,10000,100]}
+].forEach(({id,a})=>{document.getElementById(id).addEventListener('click',e=>{e.stopPropagation();showPop(document.getElementById(id),...a);});});
+
+// ── Canvas ───────────────────────────────────────────────────
+function setHome(v){
+  homeVal=v;
+  document.getElementById('ss-home').checked=v===1;
+  document.getElementById('ss-home-mk').textContent=v===1?'1':'0';
+  const d=document.getElementById('home-desc');
+  d.style.color=v===1?'var(--grn)':'var(--amb)';
+  d.innerHTML=v===1?'home=1<br>Return to 0°':'home=0<br>Stay at angle';
+  drawCanvas();
+}
+function drawCanvas(){
+  const angle=parseInt(document.getElementById('ss-angle').value)||0;
+  const c=document.getElementById('srv-canvas'),ctx=c.getContext('2d');
+  const cx=38,cy=48,r=28,rad=angle*Math.PI/180;
+  ctx.clearRect(0,0,c.width,c.height);
+  ctx.beginPath();ctx.arc(cx,cy,r,Math.PI,0,false);ctx.strokeStyle='#2a2a38';ctx.lineWidth=2;ctx.stroke();
+  if(homeVal===1&&angle>0){ctx.beginPath();ctx.arc(cx,cy,r-4,0,-rad,true);ctx.strokeStyle='#1a4a1a';ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.stroke();ctx.setLineDash([]);}
+  const ex=cx+r*Math.cos(rad),ey=cy-r*Math.sin(rad);
+  ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(ex,ey);ctx.strokeStyle=homeVal===1?'#22c55e':'#f59e0b';ctx.lineWidth=2.5;ctx.stroke();
+  ctx.beginPath();ctx.arc(cx,cy,3,0,Math.PI*2);ctx.fillStyle='#f59e0b';ctx.fill();
+  if(homeVal===1){ctx.beginPath();ctx.arc(cx+r,cy,2,0,Math.PI*2);ctx.strokeStyle='#22c55e';ctx.lineWidth=1;ctx.fillStyle='#1a4a1a';ctx.fill();ctx.stroke();}
+  ctx.fillStyle='#e2e8f0';ctx.font='9px Consolas';ctx.textAlign='center';ctx.fillText(angle+'°',cx,cy+13);
+}
+drawCanvas();
+
+// ── Servo Manager ────────────────────────────────────────────
+function renderServoList(){
+  const el=document.getElementById('servo-list');el.innerHTML='';
+  for(let i=0;i<MAX_SRV;i++){
+    const sid=i+1,isAtt=attachedMap[sid]!=null,pin=isAtt?attachedMap[sid]:pinSettings[i];
+    const row=document.createElement('div');row.className='srv-row';
+    row.innerHTML=`<span class="srv-id">S${sid}</span><span class="srv-dot ${isAtt?'on':''}">●</span>
+      ${isAtt?`<input class="srv-pin att" value="D${pin}" readonly>`
+             :`<input class="srv-pin" type="number" value="${pin}" min="2" max="13" oninput="pinSettings[${i}]=parseInt(this.value)||${DEF_PINS[i]}">`}
+      <span style="flex:1"></span>
+      ${isAtt?`<button class="btn-r btn-sm" onclick="srvDetach(${sid})">DETACH</button>`
+             :`<button class="btn-g btn-sm" onclick="srvAttach(${sid},${i})">ATTACH</button>`}`;
+    el.appendChild(row);
+  }
+  document.getElementById('srv-attach-cnt').textContent=Object.keys(attachedMap).length+'/6';
+}
+renderServoList();
+
+// ── Single Step ──────────────────────────────────────────────
+function getSSValues(){
+  return{delay_ms:parseInt(document.getElementById('ss-delay').value)||0,
+    servo_id:parseInt(document.getElementById('ss-sid').value)||1,
+    angle:parseInt(document.getElementById('ss-angle').value)||90,
+    speed:parseInt(document.getElementById('ss-speed').value)||60,
+    duration_ms:parseInt(document.getElementById('ss-dur').value)||300,
+    home:homeVal};
+}
+async function sendStep(){
+  const p=getSSValues();
+  const r=await fetch('/srv/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+  if(r.ok) addLog('srv',`→ STEP S${p.servo_id} ${p.angle}°`,'csnd');
+  else addLog('srv','✘ send failed','cerr');
+}
+function previewStep(){const p=getSSValues();drawCanvas();addLog('srv',`Preview S${p.servo_id} ${p.angle}°`,'cdim');}
+
+// ── Script Editor ────────────────────────────────────────────
+function getDefaultDelay(){return parseInt(document.getElementById('default-delay').value)||1000;}
+
+function addSrvStep(){
+  const ss=getSSValues();
+  steps.push({type:'srv',_id:++stepIdCnt,
+    delay_ms:getDefaultDelay(),servo_id:ss.servo_id,angle:ss.angle,
+    speed:ss.speed,duration_ms:ss.duration_ms,home:ss.home});
+  renderSteps();
+}
+function addKbdStep(){steps.push({type:'kbd',_id:++stepIdCnt,delay_ms:getDefaultDelay(),cmd_type:'COMBO',mod1:'CTRL',mod2:'',key:'C'});renderSteps();}
+function addMseStep(){steps.push({type:'mse',_id:++stepIdCnt,delay_ms:getDefaultDelay(),action:'MOVE',x:0,y:0,btn:'L',amount:3});renderSteps();}
+function delStep(id){steps=steps.filter(s=>s._id!==id);renderSteps();}
+
+function renderSteps(){
+  const tb=document.getElementById('steps-tbody'),hint=document.getElementById('empty-hint');
+  tb.innerHTML='';hint.style.display=steps.length?'none':'';
+  document.getElementById('step-cnt').textContent=steps.length+' STEPS';
+  steps.forEach((s,i)=>{
+    const tr=document.createElement('tr');tr.dataset.idx=i;tr.draggable=true;
+    let params='';
+    if(s.type==='srv'){
+      const sidOpts=[1,2,3,4,5,6].map(n=>`<option${n===s.servo_id?' selected':''}>${n}</option>`).join('');
+      params=`<select class="ti-s" style="width:28px;color:var(--amb);font-weight:bold" onchange="updStep(${s._id},'servo_id',parseInt(this.value))">${sidOpts}</select>
+        <input class="ti pop-inp" value="${s.angle}" style="width:26px" oninput="updStep(${s._id},'angle',this.value)" onclick="event.stopPropagation();showPop(this,'ANGLE °',0,180,1,true)">°
+        <input class="ti pop-inp" value="${s.speed}" style="width:24px" oninput="updStep(${s._id},'speed',this.value)" onclick="event.stopPropagation();showPop(this,'SPEED',1,100,1)">
+        <input class="ti pop-inp" value="${s.duration_ms}" style="width:30px" oninput="updStep(${s._id},'duration_ms',this.value)" onclick="event.stopPropagation();showPop(this,'HOLD ms',0,10000,100)">ms
+        <label style="display:inline-flex;align-items:center;gap:2px;margin-left:2px">
+          <input type="checkbox" ${s.home===1?'checked':''} style="accent-color:var(--grn);width:10px;height:10px" onchange="updStep(${s._id},'home',this.checked?1:0)">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--fg3)">H</span>
+        </label>`;
+    } else if(s.type==='kbd'){
+      const types=['COMBO','TYPE','KEY'];
+      const tsel=types.map(t=>`<option${t===s.cmd_type?' selected':''}>${t}</option>`).join('');
+      let fields='';
+      if(s.cmd_type==='COMBO'){
+        const MODS=['','CTRL','SHIFT','ALT','WIN'];
+        const mk=cur=>MODS.map(m=>`<option value="${m==='WIN'?'GUI':m}"${(m==='WIN'?'GUI':m)===cur?' selected':''}>${m||'—'}</option>`).join('');
+        fields=`<select class="ti-s" style="width:40px" onchange="updStep(${s._id},'mod1',this.value)">${mk(s.mod1)}</select>+
+          <select class="ti-s" style="width:40px" onchange="updStep(${s._id},'mod2',this.value)">${mk(s.mod2)}</select>+
+          <input class="ti" value="${esc(s.key||'C')}" style="width:28px;text-transform:uppercase" oninput="updStep(${s._id},'key',this.value.toUpperCase())">`;
+      } else if(s.cmd_type==='TYPE'){
+        fields=`<input class="ti" value="${esc(s.text||'')}" style="width:calc(100% - 70px)" oninput="updStep(${s._id},'text',this.value)">`;
+      } else {
+        const SKEYS=['ENTER','ESC','TAB','DELETE','F1','F2','F3','F4','F5','HOME','END','PAGEUP','PAGEDOWN'];
+        fields=`<select class="ti-s" style="width:80px" onchange="updStep(${s._id},'key',this.value)">${SKEYS.map(k=>`<option${k===(s.key||'ENTER')?' selected':''}>${k}</option>`).join('')}</select>`;
+      }
+      params=`<select class="ti-s" style="width:52px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>
+        <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px">${fields}</span>`;
+    } else {
+      const ACTS=['MOVE','MOVE_TO','CLICK','DBLCLICK','SCROLL'];
+      const asel=ACTS.map(a=>`<option${a===s.action?' selected':''}>${a}</option>`).join('');
+      let fields='';
+      if(s.action==='MOVE'||s.action==='MOVE_TO'){
+        const lb=s.action==='MOVE_TO'?['x','y']:['dx','dy'];
+        fields=`<span style="color:var(--fg3);font-size:9px">${lb[0]}</span><input class="ti" value="${s.x||0}" style="width:30px" oninput="updStep(${s._id},'x',this.value)">
+          <span style="color:var(--fg3);font-size:9px">${lb[1]}</span><input class="ti" value="${s.y||0}" style="width:30px" oninput="updStep(${s._id},'y',this.value)">`;
+      } else if(s.action==='CLICK'||s.action==='DBLCLICK'){
+        fields=`<select class="ti-s" style="width:42px" onchange="updStep(${s._id},'btn',this.value)">${['L','R','M'].map(b=>`<option${b===s.btn?' selected':''}>${b}</option>`).join('')}</select>`;
+      } else {
+        fields=`<span style="color:var(--fg3);font-size:9px">amt</span><input class="ti" value="${s.amount||3}" style="width:30px" oninput="updStep(${s._id},'amount',this.value)">`;
+      }
+      params=`<select class="ti-s" style="width:64px" onchange="updStepMse(${s._id},this.value)">${asel}</select>
+        <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px">${fields}</span>`;
+    }
+    const badge=s.type==='srv'?'<span class="badge b-srv">SRV</span>':
+                s.type==='kbd'?'<span class="badge b-kbd">KBD</span>':
+                               '<span class="badge b-mse">MSE</span>';
+    tr.innerHTML=`<td class="drag-col">⠿</td><td>${badge}</td>
+      <td><input class="ti pop-inp" value="${s.delay_ms}" style="width:38px"
+          oninput="updStep(${s._id},'delay_ms',this.value)"
+          onclick="event.stopPropagation();showPop(this,'DELAY ms',0,30000,500)"></td>
+      <td>${params}</td>
+      <td><button class="del-btn" onclick="delStep(${s._id})">✕</button></td>`;
+    tr.addEventListener('dragstart',e=>{dragSrc=i;tr.classList.add('dragging');e.dataTransfer.effectAllowed='move';});
+    tr.addEventListener('dragend',()=>{tr.classList.remove('dragging');document.querySelectorAll('#steps-tbody tr').forEach(r=>r.classList.remove('drag-over'));});
+    tr.addEventListener('dragover',e=>{e.preventDefault();document.querySelectorAll('#steps-tbody tr').forEach(r=>r.classList.remove('drag-over'));tr.classList.add('drag-over');});
+    tr.addEventListener('drop',e=>{e.preventDefault();if(dragSrc!==null&&dragSrc!==i){const m=steps.splice(dragSrc,1)[0];steps.splice(i,0,m);dragSrc=null;renderSteps();}});
+    tb.appendChild(tr);
+  });
+}
+function updStep(id,key,val){const s=steps.find(x=>x._id===id);if(!s)return;const nk=['delay_ms','servo_id','angle','speed','duration_ms','home','x','y','amount'];s[key]=nk.includes(key)?parseInt(val)||0:val;}
+function updStepKbd(id,t){const s=steps.find(x=>x._id===id);if(s){s.cmd_type=t;renderSteps();}}
+function updStepMse(id,t){const s=steps.find(x=>x._id===id);if(s){s.action=t;renderSteps();}}
+
+function exportJSON(){
+  const out=steps.map(({_id,...s})=>s);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify({loop:document.getElementById('loop-cb').checked,steps:out},null,2)],{type:'application/json'}));
+  a.download='rks_script.json';a.click();
+}
+function importJSON(){document.getElementById('file-input').click();}
+function handleImport(e){
+  const file=e.target.files[0];if(!file)return;
+  const r=new FileReader();
+  r.onload=ev=>{try{const d=JSON.parse(ev.target.result);
+    if(typeof d.loop==='boolean')document.getElementById('loop-cb').checked=d.loop;
+    if(Array.isArray(d.steps)){steps=d.steps.map(s=>({...s,_id:++stepIdCnt}));renderSteps();addLog('srv','Imported '+steps.length+' steps','cok');}
+  }catch{addLog('srv','✘ Invalid JSON','cerr');}};
+  r.readAsText(file);e.target.value='';
+}
+
+// ── Run ──────────────────────────────────────────────────────
+async function runScript(){
+  if(!steps.length){addLog('srv','⚠ no steps','cerr');return;}
+  const loop=document.getElementById('loop-cb').checked;
+  // 全部走後端 /script/run，支援 SRV + KBD + MSE 混合
+  const body={
+    loop,
+    servos:attachedMap,
+    steps:steps.map(({_id,...s})=>s)
+  };
+  const r=await fetch('/script/run',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok){
+    addLog('srv',`→ SCRIPT RUN  ${steps.length} steps  loop=${loop}`,'csnd');
+    document.getElementById('prog-badge').style.display='';
+    setProgress(0,steps.length);
+  } else {
+    addLog('srv','✘ '+(d.detail||'run failed'),'cerr');
+  }
+}
+
+async function stopScript(){
+  const r=await fetch('/script/stop',{method:'POST'});
+  if(r.ok) addLog('srv','→ SCRIPT STOP','csnd');
+  await fetch('/srv/api/stop',{method:'POST'}).catch(()=>{});
+}
+
+// ── Progress ─────────────────────────────────────────────────
+function setProgress(cur,tot){
+  document.getElementById('prog-cur').textContent=cur!=null?cur:'—';
+  document.getElementById('prog-tot').textContent=tot!=null?tot:'—';
+  const pct=(cur!=null&&tot>0)?Math.round(cur/tot*100):0;
+  document.getElementById('prog-fill').style.width=pct+'%';
+  document.getElementById('prog-pct').textContent=cur!=null?pct+'%':'';
+  const fi=document.getElementById('sc-prog-fi');if(fi)fi.style.width=pct+'%';
+  const lb=document.getElementById('sc-prog-lbl');if(lb)lb.textContent=cur!=null?`${cur} / ${tot}  ${pct}%`:'0 / 0';
+}
+function setProgMsg(m){document.getElementById('prog-msg').textContent=m;}
+
+// ── Keyboard ─────────────────────────────────────────────────
+document.getElementById('kb-main').addEventListener('click',e=>{
+  const el=e.target.closest('.k');if(!el||kbLocked)return;
+  const mod=el.dataset.mod,key=el.dataset.key;
+  if(mod){modState[mod]=!modState[mod];el.classList.toggle('act',modState[mod]);updateModInd();kbmSend(modState[mod]?`DOWN:${mod}`:`UP:${mod}`);return;}
+  if(!key)return;
+  const mods=Object.keys(modState).filter(m=>modState[m]);
+  if(mods.length){
+    const kp=key.startsWith('TYPE:')?key.slice(5).toUpperCase():key.startsWith('KEY:')?key.slice(4):key;
+    kbmSend(`COMBO:${mods.join('+')}+${kp}`);
+    mods.forEach(m=>{modState[m]=false;document.querySelectorAll(`[data-mod="${m}"]`).forEach(k=>k.classList.remove('act'));});
+    updateModInd();kbmSend('RELEASEALL');
+  } else {kbmSend(key);}
+});
+document.getElementById('txt-area').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const v=document.getElementById('txt-area').value;if(v&&!kbLocked){kbmSend(`TYPE:${v}`);document.getElementById('txt-area').value='';}}
+});
+function updateModInd(){
+  const el=document.getElementById('mod-indicators');el.innerHTML='';
+  Object.keys(modState).filter(m=>modState[m]).forEach(m=>{
+    const sp=document.createElement('span');
+    sp.style.cssText=`font-family:var(--mono);font-size:9px;color:var(--blu);background:rgba(56,189,248,.1);border:1px solid var(--blu);padding:1px 5px;border-radius:2px`;
+    sp.textContent=m==='GUI'?'WIN':m;el.appendChild(sp);
+  });
+}
+
+// ── Mouse ────────────────────────────────────────────────────
+['up','down','left','right'].forEach(dir=>{
+  document.getElementById('mk-'+dir).addEventListener('click',()=>{
+    const step=parseInt(document.getElementById('step-val').value)||10;
+    const map={up:[0,-step],down:[0,step],left:[-step,0],right:[step,0]};
+    const[dx,dy]=map[dir];kbmSend(`MOUSE:MOVE ${dx} ${dy}`);
+  });
+});
+function mouseClick(btn){
+  const mode=document.querySelector('input[name="cm"]:checked').value;
+  kbmSend(mode==='double'?`MOUSE:DBLCLICK ${btn}`:`MOUSE:CLICK ${btn}`);
+}
+
+// ── API ──────────────────────────────────────────────────────
+async function kbmSend(cmd){
+  if(kbLocked)return;
+  addLog('kbm','→ '+cmd,'csnd');
+  const r=await fetch('/kbm/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})});
+  if(!r.ok){const d=await r.json().catch(()=>({}));addLog('kbm','✘ '+(d.detail?.status||r.status),'cerr');}
+}
+async function srvRaw(cmd){
+  const r=await fetch('/srv/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})});
+  if(r.ok) addLog('srv','→ '+cmd,'csnd');
+  else addLog('srv','✘ not connected','cerr');
+}
+async function srvStop(){await fetch('/srv/api/stop',{method:'POST'});addLog('srv','→ SRV STOP','csnd');}
+// stopScript: 停止混合腳本 + SRV
+async function stopScript(){
+  await fetch('/script/stop',{method:'POST'}).catch(()=>{});
+  await fetch('/srv/api/stop',{method:'POST'}).catch(()=>{});
+  addLog('srv','→ STOP','csnd');
+  document.getElementById('prog-badge').style.display='none';
+  kbLocked=false;
+  document.getElementById('kb-lock-lbl').style.display='none';
+  document.getElementById('kb-lock-msg').style.display='none';
+}
+async function srvAttach(sid,idx){
+  const r=await fetch('/srv/api/attach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid,pin:pinSettings[idx]})});
+  const d=await r.json();
+  if(r.ok){attachedMap=intKeys(d.attached||{});renderServoList();addLog('srv',`→ ATTACH ${sid}`,'csnd');}
+  else addLog('srv','✘ ATTACH failed','cerr');
+}
+async function srvDetach(sid){
+  const r=await fetch('/srv/api/detach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid})});
+  const d=await r.json();
+  if(r.ok){attachedMap=intKeys(d.attached||{});renderServoList();addLog('srv',`→ DETACH ${sid}`,'csnd');}
+}
+async function srvAttachAll(){
+  const servos={};for(let i=0;i<MAX_SRV;i++)servos[i+1]=pinSettings[i];
+  const r=await fetch('/srv/api/attach_all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({servos})});
+  const d=await r.json();if(r.ok){attachedMap=intKeys(d.attached||{});renderServoList();}
+}
+async function srvDetachAll(){
+  await fetch('/srv/api/detach_all',{method:'POST'});attachedMap={};renderServoList();
+}
+async function srvToggleConnect(){
+  if(srvState!=='disc'){await fetch('/srv/api/disconnect',{method:'POST'});srvState='disc';applySrvStatus({state:'disc',attached:{}});addLog('srv','Disconnected','cdim');}
+  else{const port=document.getElementById('srv-port-sel').value;if(!port){addLog('srv','Select a port','cerr');return;}
+    const r=await fetch('/srv/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port})});
+    const d=await r.json();if(r.ok){addLog('srv','Connected to '+d.port,'cok');}else addLog('srv','✘ '+(d.detail||'failed'),'cerr');}
+}
+async function kbmToggleConnect(){
+  if(kbmState!=='disc'){await fetch('/kbm/api/disconnect',{method:'POST'});kbmState='disc';updateKbmLed();addLog('kbm','Disconnected','cdim');}
+  else{const port=document.getElementById('kbm-port-sel').value;if(!port){addLog('kbm','Select a port','cerr');return;}
+    const r=await fetch('/kbm/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port})});
+    const d=await r.json();if(r.ok){kbmState='idle';updateKbmLed();addLog('kbm','Connected to '+d.port,'cok');}else addLog('kbm','✘ '+(d.detail||'failed'),'cerr');}
+}
+function applySrvStatus(msg){
+  srvState=msg.state||'disc';
+  const led=document.getElementById('srv-led');
+  led.className='led '+(srvState==='running'?'led-amb':srvState==='idle'?'led-grn':'led-dim');
+  const btn=document.getElementById('srv-conn-btn');
+  btn.textContent=srvState==='disc'?'CONNECT':'DISCONNECT';
+  btn.className=srvState==='disc'?'btn-g btn-sm':'btn-r btn-sm';
+  if(msg.attached){attachedMap=intKeys(msg.attached||{});renderServoList();}
+  kbLocked=srvState==='running';
+  document.getElementById('kb-lock-lbl').style.display=kbLocked?'':'none';
+  document.getElementById('kb-lock-msg').style.display=kbLocked?'':'none';
+}
+function updateKbmLed(){
+  const led=document.getElementById('kbm-led');
+  led.className='led '+(kbmState==='idle'?'led-grn':'led-dim');
+  const btn=document.getElementById('kbm-conn-btn');
+  btn.textContent=kbmState==='idle'?'DISCONNECT':'CONNECT';
+  btn.className=kbmState==='idle'?'btn-r btn-sm':'btn-b btn-sm';
+}
+function intKeys(o){const r={};Object.entries(o).forEach(([k,v])=>{r[parseInt(k)]=v;});return r;}
+
+// ── WebSocket ────────────────────────────────────────────────
+function srvWSConnect(){
+  srvWS=new WebSocket(`ws://${location.host}/ws/srv`);
+  srvWS.onopen=()=>addLog('srv','WS connected','cdim');
+  srvWS.onmessage=e=>{try{const msg=JSON.parse(e.data);
+    if(msg.type==='serial') addLog('srv','← '+msg.line,classifySrv(msg.line));
+    else if(msg.type==='status') applySrvStatus(msg);
+    else if(msg.type==='attached'){attachedMap=intKeys(msg.attached||{});renderServoList();}
+    else if(msg.type==='done'){applySrvStatus({state:'idle'});setProgress(null,null);setProgMsg('✔ done');document.getElementById('prog-badge').style.display='none';}
+    else if(msg.type==='error') addLog('srv','ERR '+msg.message,'cerr');
+  }catch(_){}};
+  srvWS.onclose=()=>{addLog('srv','WS disconnected, retry 3s...','cerr');setTimeout(srvWSConnect,3000);};
+}
+function kbmWSConnect(){
+  kbmWS=new WebSocket(`ws://${location.host}/ws/kbm`);
+  kbmWS.onopen=()=>addLog('kbm','WS connected','cdim');
+  kbmWS.onmessage=e=>{try{const msg=JSON.parse(e.data);
+    if(msg.type==='serial'){
+      addLog('kbm','← '+msg.line,msg.line.startsWith('OK')?'cok':'cdim');
+    } else if(msg.type==='status'){
+      kbmState=msg.state||'disc';updateKbmLed();
+    } else if(msg.type==='script_start'){
+      addLog('kbm',`▶ Script started  ${msg.total} steps  loop=${msg.loop}`,'csnd');
+      setProgress(0,msg.total);
+      document.getElementById('prog-badge').style.display='';
+      kbLocked=true;
+      document.getElementById('kb-lock-lbl').style.display='';
+      document.getElementById('kb-lock-msg').style.display='';
+    } else if(msg.type==='script_progress'){
+      const cur=msg.step+1,tot=msg.total;
+      setProgress(cur,tot);
+      const typeLabel=msg.step_type.toUpperCase();
+      document.getElementById('sc-prog-step').textContent=`[${typeLabel}] ${cur}/${tot}`;
+      document.getElementById('prog-msg').textContent=`[${typeLabel}] step ${cur}/${tot}`;
+    } else if(msg.type==='script_done'){
+      addLog('kbm',`✔ Script done  ×${msg.iterations||1}`,'cok');
+      setProgMsg('✔ done');
+      document.getElementById('prog-badge').style.display='none';
+      kbLocked=false;
+      document.getElementById('kb-lock-lbl').style.display='none';
+      document.getElementById('kb-lock-msg').style.display='none';
+    } else if(msg.type==='script_stopped'){
+      addLog('kbm','■ Script stopped','crun');
+      setProgMsg('■ stopped');
+      document.getElementById('prog-badge').style.display='none';
+      kbLocked=false;
+      document.getElementById('kb-lock-lbl').style.display='none';
+      document.getElementById('kb-lock-msg').style.display='none';
+    } else if(msg.type==='script_error'){
+      addLog('kbm','✘ '+msg.message,'cerr');
+    }
+  }catch(_){}};
+  kbmWS.onclose=()=>{addLog('kbm','WS disconnected, retry 3s...','cerr');setTimeout(kbmWSConnect,3000);};
+}
+function classifySrv(l){
+  if(['OK READY','OK DONE','OK PONG','OK STOPPED'].some(s=>l.startsWith(s)))return 'cok';
+  if(l.startsWith('OK RUNNING')||l.startsWith('OK LOOP'))return 'crun';
+  if(l.startsWith('OK ATTACH')||l.startsWith('OK DETACH'))return 'catt';
+  if(l.startsWith('ERR'))return 'cerr';
+  return 'cdim';
+}
+
+// ── Log ──────────────────────────────────────────────────────
+function addLog(ch,text,cls='cdim'){
+  const ts=new Date().toLocaleTimeString('zh-TW',{hour12:false});
+  logLines[ch].push({ts,text,cls});if(logLines[ch].length>400)logLines[ch].shift();
+  if(ch===activeLog)renderLog();
+}
+function renderLog(){
+  const f=document.getElementById('log-filter').value.toLowerCase();
+  const out=document.getElementById('sout-'+activeLog);if(!out)return;
+  const lines=f?logLines[activeLog].filter(l=>l.text.toLowerCase().includes(f)):logLines[activeLog];
+  out.innerHTML=lines.map(l=>`<div class="sl"><span class="sts">${l.ts}</span><span class="${l.cls}">${esc(l.text)}</span></div>`).join('');
+  out.scrollTop=out.scrollHeight;
+}
+function switchLog(ch){
+  activeLog=ch;
+  document.getElementById('sout-srv').classList.toggle('hidden',ch!=='srv');
+  document.getElementById('sout-kbm').classList.toggle('hidden',ch!=='kbm');
+  document.getElementById('tab-srv').className='smon-tab'+(ch==='srv'?' a-srv':'');
+  document.getElementById('tab-kbm').className='smon-tab'+(ch==='kbm'?' a-kbm':'');
+  document.getElementById('man-pfx').style.color=ch==='srv'?'var(--amb)':'var(--blu)';
+  renderLog();
+}
+function manualSend(){
+  const i=document.getElementById('man-inp');const cmd=i.value.trim();if(!cmd)return;
+  if(activeLog==='srv')srvRaw(cmd);else kbmSend(cmd);i.value='';
+}
+
+// ── Webcam ───────────────────────────────────────────────────
+function camLoaded(){
+  document.getElementById('cam-img').style.display='block';
+  document.getElementById('cam-offline').style.display='none';
+  document.getElementById('cam-live').style.display='block';
+  document.getElementById('cam-led').className='led led-grn';
+}
+function camError(){
+  document.getElementById('cam-img').style.display='none';
+  document.getElementById('cam-offline').style.display='flex';
+  document.getElementById('cam-live').style.display='none';
+  document.getElementById('cam-led').className='led led-dim';
+  setTimeout(()=>{document.getElementById('cam-img').src='/stream?t='+Date.now();},5000);
+}
+
+// ── Port refresh ─────────────────────────────────────────────
+async function refreshPorts(){
+  const[sd,kd]=await Promise.all([
+    fetch('/srv/api/ports').then(r=>r.json()).catch(()=>({ports:[]})),
+    fetch('/kbm/api/ports').then(r=>r.json()).catch(()=>({ports:[]})),
+  ]);
+  fillPortSel('srv-port-sel',sd.ports||[]);
+  fillPortSel('kbm-port-sel',kd.ports||[]);
+}
+function fillPortSel(id,ports){
+  const sel=document.getElementById(id);const cur=sel.value;
+  sel.innerHTML='<option value="">— select port —</option>';
+  ports.forEach(p=>{const o=document.createElement('option');o.value=p.port;o.text=(p.likely?'⭐ ':'   ')+p.port+'  '+p.desc;sel.appendChild(o);});
+  if(cur)sel.value=cur;
+}
+
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// ── Init ─────────────────────────────────────────────────────
+switchLog('srv');
+refreshPorts();
+srvWSConnect();
+kbmWSConnect();
+setInterval(refreshPorts,8000);
+addLog('srv','RKS v4 ready','cdim');
+addLog('kbm','RKS v4 ready','cdim');
+</script>
+</body>
+</html>
