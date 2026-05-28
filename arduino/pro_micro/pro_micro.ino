@@ -87,7 +87,12 @@ static bool processCommand(char *raw) {
     char *tok=strtok(buf,"+");
     while (tok&&cnt<6) {
       uint8_t code=findMod(tok); if(!code) code=findKey(tok);
-      if(!code&&strlen(tok)==1) code=(uint8_t)tok[0];
+      if(!code&&strlen(tok)==1) {
+        char ch = tok[0];
+        // 單字母組合鍵預設送小寫，避免隱含 SHIFT（例如 WIN+R 被解讀成 WIN+SHIFT+R）
+        if (ch >= 'A' && ch <= 'Z') ch = ch - 'A' + 'a';
+        code=(uint8_t)ch;
+      }
       if(code){pressed[cnt++]=code;Keyboard.press(code);}
       tok=strtok(nullptr,"+");
     }
