@@ -9,6 +9,7 @@ import serial.tools.list_ports
 import threading
 import time
 import logging
+import queue
 from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class KeyboardSerial:
         self._on_disconnect: Optional[Callable[[], None]]   = None
         self._thread:        Optional[threading.Thread]     = None
         self._running        = False
+        self._ack_queue:     queue.Queue[str]               = queue.Queue()
 
     # ── callbacks ─────────────────────────────────────────────
     def on_line(self, cb: Callable[[str], None]):
@@ -78,7 +80,8 @@ class KeyboardSerial:
 
     @property
     def port(self) -> Optional[str]:
-        return self._serial.port if self.is_connected else None
+        ser = self._serial
+        return ser.port if ser and ser.is_open else None
 
     # ── send & wait ACK ───────────────────────────────────────
     def send(self, cmd: str, timeout: float = 1.0) -> str:
@@ -90,27 +93,41 @@ class KeyboardSerial:
             return "DISCONNECTED"
         with self._lock:
             try:
-                self._serial.reset_input_buffer()
-                self._serial.write(f"{cmd.strip()}\n".encode())
-                self._serial.flush()
+                ser = self._serial
+                if not ser or not ser.is_open:
+                    return "DISCONNECTED"
+                # 清空舊 ACK，避免前一筆殘留訊息影響本次判斷
+                self._drain_ack_queue()
+                ser.reset_input_buffer()
+                ser.write(f"{cmd.strip()}\n".encode())
+                ser.flush()
                 logger.debug(f"KBM >> {cmd}")
-                deadline = time.time() + timeout
-                while time.time() < deadline:
-                    if self._serial.in_waiting:
-                        raw = self._serial.readline()
-                        ack = raw.decode("utf-8", errors="ignore").strip()
-                        logger.debug(f"KBM << {ack}")
-                        if ack and self._on_line:
-                            self._on_line(ack)
-                        if ack in ("OK", "ERR"):
-                            return ack
-                        if ack.startswith("OK"):   # OK PONG など
-                            return "OK"
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    remain = deadline - time.monotonic()
+                    if remain <= 0:
+                        break
+                    try:
+                        line = self._ack_queue.get(timeout=remain)
+                    except queue.Empty:
+                        break
+                    ack = line.strip()
+                    if ack in ("OK", "ERR"):
+                        return ack
+                    if ack.startswith("OK"):
+                        return "OK"
                 return "TIMEOUT"
             except serial.SerialException as e:
                 logger.error(f"KBM send error: {e}")
                 self._serial = None
                 return "ERR"
+
+    def _drain_ack_queue(self):
+        while True:
+            try:
+                self._ack_queue.get_nowait()
+            except queue.Empty:
+                break
 
     # ── background read loop (for log broadcast) ──────────────
     def _read_loop(self):
@@ -121,8 +138,10 @@ class KeyboardSerial:
                 raw = self._serial.readline()
                 if raw:
                     line = raw.decode("utf-8", errors="replace").strip()
-                    if line and self._on_line:
-                        self._on_line(line)
+                    if line:
+                        self._ack_queue.put(line)
+                        if self._on_line:
+                            self._on_line(line)
             except serial.SerialException as e:
                 logger.error(f"KBM read error: {e}")
                 break

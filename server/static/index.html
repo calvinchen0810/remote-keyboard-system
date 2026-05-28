@@ -50,7 +50,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 /* layout */
 #app{display:flex;flex-direction:column;height:100vh}
 #topbar{display:flex;align-items:center;gap:6px;padding:0 10px;height:42px;
-  background:var(--panel);border-bottom:1px solid var(--bd);flex-shrink:0}
+  background:var(--panel);border-bottom:1px solid var(--bd);flex-shrink:0;
+  overflow-x:auto;overflow-y:hidden}
 #logo{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--grn);letter-spacing:2px;white-space:nowrap}
 .tbsep{width:1px;height:14px;background:var(--bd);flex-shrink:0;margin:0 2px}
 .led{width:7px;height:7px;border-radius:50%;flex-shrink:0;transition:all .3s}
@@ -59,17 +60,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .led-dim{background:var(--fg3)}
 .tb-grp{display:flex;align-items:center;gap:4px;flex-shrink:0}
 .tb-grp-lbl{font-family:var(--mono);font-size:9px;letter-spacing:.8px;white-space:nowrap}
-.tbsel{width:108px;font-size:10px}
+.tbsel{width:clamp(180px,18vw,260px);font-size:10px}
 #sp{flex:1}
 #body{display:flex;flex:1;overflow:hidden;min-height:0;padding:6px;gap:6px}
 
 /* columns */
 #left-col{width:190px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}
-#mid-col{display:flex;flex-direction:column;gap:6px;overflow:hidden;min-width:300px}
+#mid-col{flex:1 1 0;display:flex;flex-direction:column;gap:6px;overflow:hidden;min-width:300px}
 #drag-handle{width:5px;flex-shrink:0;cursor:col-resize;background:transparent;border-radius:2px;position:relative;z-index:10;transition:background .15s}
 #drag-handle:hover,#drag-handle.dragging{background:var(--grn2)}
 #drag-handle::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:1px;height:40px;background:var(--br);border-radius:1px}
-#script-col{display:flex;flex-direction:column;overflow:hidden;min-width:250px}
+#script-col{flex:1 1 0;display:flex;flex-direction:column;overflow:hidden;min-width:300px}
 #right-col{width:220px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}
 
 /* left */
@@ -117,21 +118,21 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 #script-tb{display:flex;align-items:center;gap:4px;padding:5px 7px;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--card);flex-wrap:wrap;row-gap:3px}
 #tbl-wrap{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0}
 #empty-hint{padding:14px;text-align:center;color:var(--fg3);font-family:var(--mono);font-size:10px}
-.stbl{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;table-layout:fixed}
-.stbl thead th{position:sticky;top:0;z-index:1;background:var(--card);color:var(--fg3);font-size:9px;letter-spacing:.8px;padding:3px 3px;text-align:left;border-bottom:1px solid var(--br);font-weight:normal}
+.stbl{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px;table-layout:fixed}
+.stbl thead th{position:sticky;top:0;z-index:1;background:var(--card);color:var(--fg3);font-size:10px;letter-spacing:.8px;padding:4px 4px;text-align:left;border-bottom:1px solid var(--br);font-weight:normal}
 .stbl tbody tr{border-bottom:1px solid var(--bd);cursor:grab}
 .stbl tbody tr:hover{background:var(--hov)}
 .stbl tbody tr.drag-over{border-top:2px solid var(--grn2)}
-.stbl td{padding:2px 2px;vertical-align:middle}
-.badge{display:inline-flex;align-items:center;padding:1px 4px;border-radius:2px;font-size:9px;font-weight:600}
+.stbl td{padding:3px 3px;vertical-align:middle}
+.badge{display:inline-flex;align-items:center;padding:2px 6px;border-radius:2px;font-size:10px;font-weight:600;white-space:nowrap}
 .b-srv{background:rgba(245,158,11,.12);color:#d97706;border:1px solid rgba(245,158,11,.3)}
 .b-kbd{background:rgba(167,139,250,.12);color:#8b5cf6;border:1px solid rgba(167,139,250,.3)}
 .b-mse{background:rgba(239,68,68,.1);color:#f87171;border:1px solid rgba(239,68,68,.25)}
-.ti{font-family:var(--mono);font-size:10px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:1px 3px;text-align:center}
+.ti{font-family:var(--mono);font-size:11px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:2px 4px;text-align:center;min-height:22px}
 .ti:hover{border-color:var(--grn2)}
-.ti-s{font-family:var(--mono);font-size:10px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:1px 2px}
-.drag-col{color:var(--fg3);text-align:center;font-size:11px;width:12px;cursor:grab}
-.del-btn{background:none;border:none;color:var(--fg3);padding:1px 3px;font-size:11px;cursor:pointer}
+.ti-s{font-family:var(--mono);font-size:11px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:2px 3px;min-height:22px}
+.drag-col{color:var(--fg3);text-align:center;font-size:12px;width:14px;cursor:grab}
+.del-btn{background:none;border:none;color:var(--fg3);padding:2px 4px;font-size:13px;cursor:pointer}
 .del-btn:hover{color:var(--red)}
 #sc-prog-row{display:flex;align-items:center;gap:5px;padding:4px 7px;border-top:1px solid var(--bd);flex-shrink:0;background:var(--card)}
 .prog-tr{flex:1;height:3px;background:var(--inp);border-radius:2px;overflow:hidden}
@@ -317,6 +318,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
       <button class="sck" onclick="kbmSend('COMBO:CTRL+S')">CTRL+S</button>
       <button class="sck" onclick="kbmSend('COMBO:ALT+TAB')">ALT+TAB</button>
       <button class="sck" onclick="kbmSend('COMBO:GUI+D')">WIN+D</button>
+      <button class="sck" onclick="kbmSend('COMBO:GUI+R')">WIN+R</button>
       <button class="sck" style="color:var(--red);border-color:#7f1d1d" onclick="kbmSend('RELEASEALL')">⚠ RELEASE</button>
     </div>
   </div>
@@ -331,14 +333,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     <span id="step-cnt" style="font-size:9px;color:var(--grn2);background:rgba(34,197,94,.08);border:1px solid var(--bd);padding:1px 4px;border-radius:2px;margin-left:2px">0 STEPS</span>
   </div>
   <div id="script-tb">
+    <button class="btn-a btn-sm" onclick="addSrvStep()">＋ SRV</button>
+    <button class="btn-p btn-sm" onclick="addKbdStep()">＋ KBD</button>
+    <button class="btn-r btn-sm" onclick="addMseStep()">＋ MSE</button>
+    <div style="width:1px;height:12px;background:var(--bd);margin:0 2px"></div>
     <div style="display:flex;align-items:center;gap:3px;font-family:var(--mono);font-size:9px;color:var(--fg3)">
       ms:<input type="number" id="default-delay" value="1000" min="0" max="30000" step="500"
            style="width:52px;padding:2px 4px" class="pop-inp" onclick="showDelayPop(this)">
     </div>
-    <div style="width:1px;height:12px;background:var(--bd);margin:0 2px"></div>
-    <button class="btn-a btn-sm" onclick="addSrvStep()">＋ SRV</button>
-    <button class="btn-p btn-sm" onclick="addKbdStep()">＋ KBD</button>
-    <button class="btn-r btn-sm" onclick="addMseStep()">＋ MSE</button>
     <div style="width:1px;height:12px;background:var(--bd);margin:0 2px"></div>
     <label style="font-family:var(--mono);font-size:10px;color:var(--fg2);display:flex;align-items:center;gap:3px">
       <input type="checkbox" id="loop-cb" style="accent-color:var(--amb)"> Loop
@@ -351,11 +353,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <div id="tbl-wrap">
     <table class="stbl">
       <thead><tr>
-        <th style="width:12px"></th>
-        <th style="width:28px">TYPE</th>
-        <th style="width:46px">DELAY</th>
+        <th style="width:14px"></th>
+        <th style="width:48px">TYPE</th>
+        <th style="width:52px">DELAY</th>
         <th>PARAMS</th>
-        <th style="width:16px"></th>
+        <th style="width:24px"></th>
       </tr></thead>
       <tbody id="steps-tbody"></tbody>
     </table>
@@ -694,7 +696,7 @@ function renderSteps(){
       } else if(s.cmd_type==='TYPE'){
         fields=`<input class="ti" value="${esc(s.text||'')}" style="width:calc(100% - 70px)" oninput="updStep(${s._id},'text',this.value)">`;
       } else {
-        const SKEYS=['ENTER','ESC','TAB','DELETE','F1','F2','F3','F4','F5','HOME','END','PAGEUP','PAGEDOWN'];
+        const SKEYS=['ENTER','ESC','TAB','DELETE','UP','DOWN','LEFT','RIGHT','HOME','END','PAGEUP','PAGEDOWN','F1','F2','F3','F4','F5'];
         fields=`<select class="ti-s" style="width:80px" onchange="updStep(${s._id},'key',this.value)">${SKEYS.map(k=>`<option${k===(s.key||'ENTER')?' selected':''}>${k}</option>`).join('')}</select>`;
       }
       params=`<select class="ti-s" style="width:52px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>
@@ -794,7 +796,7 @@ function setProgress(cur,tot){
 function setProgMsg(m){document.getElementById('prog-msg').textContent=m;}
 
 // ── Keyboard ─────────────────────────────────────────────────
-document.getElementById('kb-main').addEventListener('click',e=>{
+document.getElementById('kb-body').addEventListener('click',e=>{
   const el=e.target.closest('.k');if(!el||kbLocked)return;
   const mod=el.dataset.mod,key=el.dataset.key;
   if(mod){modState[mod]=!modState[mod];el.classList.toggle('act',modState[mod]);updateModInd();kbmSend(modState[mod]?`DOWN:${mod}`:`UP:${mod}`);return;}
