@@ -3,7 +3,7 @@
 //  USB HID: Keyboard + Mouse
 //
 //  Serial1 (TX1/RX1) ← Nano_KB SoftwareSerial（指令來源）
-//  Serial  (USB)     → debug（電腦1 Serial Monitor 可看）
+//  Serial  (USB)     ← 被控端事件來源 / → debug（電腦1 Serial Monitor 可看）
 //
 //  接線：
 //    Pro Micro TX1 (Pin 1) → Nano_KB D10 (SoftSerial RX)
@@ -58,6 +58,13 @@ static uint8_t mouseBtn(char c) {
   return MOUSE_LEFT;
 }
 
+static void forwardEventToController(const char *msg) {
+  Serial1.print(F("EVT:"));
+  Serial1.println(msg);
+  Serial.print(F("[EVT] "));
+  Serial.println(msg);
+}
+
 static bool processCommand(char *raw) {
   int len = strlen(raw);
   while (len > 0 && (raw[len-1]=='\r'||raw[len-1]=='\n')) raw[--len] = 0;
@@ -108,6 +115,7 @@ static bool processCommand(char *raw) {
 }
 
 char rxBuf[128];
+char usbBuf[128];
 
 void setup() {
   Serial1.begin(BAUD);
@@ -119,6 +127,17 @@ void setup() {
 }
 
 void loop() {
+  if (Serial.available()) {
+    int len = Serial.readBytesUntil('\n', usbBuf, sizeof(usbBuf)-1);
+    usbBuf[len] = 0;
+    int ulen = strlen(usbBuf);
+    while (ulen > 0 && (usbBuf[ulen-1] == '\r' || usbBuf[ulen-1] == '\n')) usbBuf[--ulen] = 0;
+    if (ulen > 0) {
+      if (!strncmp(usbBuf, "EVT:", 4)) forwardEventToController(usbBuf + 4);
+      else forwardEventToController(usbBuf);
+    }
+  }
+
   if (Serial1.available()) {
     int len = Serial1.readBytesUntil('\n', rxBuf, sizeof(rxBuf)-1);
     rxBuf[len] = 0;

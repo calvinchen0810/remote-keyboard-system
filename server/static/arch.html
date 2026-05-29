@@ -70,7 +70,7 @@ code{font-family:'Consolas',monospace;background:#1e1e26;padding:1px 5px;border-
 <rect x="30" y="52" width="250" height="82" rx="6" fill="#111115" stroke="#2a2a38"/>
 <text x="155" y="72"  text-anchor="middle" fill="#94a3b8" font-size="10" letter-spacing="1">FastAPI :8000</text>
 <text x="155" y="90"  text-anchor="middle" fill="#475569" font-size="9">KeyboardSerial (38400) · ServoSerial (115200)</text>
-<text x="155" y="107" text-anchor="middle" fill="#475569" font-size="9">WS /ws/kbm · WS /ws/srv · GET /stream</text>
+<text x="155" y="107" text-anchor="middle" fill="#475569" font-size="9">WS /ws/kbm · EVT bus · WS /ws/srv · GET /stream</text>
 <text x="155" y="122" text-anchor="middle" fill="#475569" font-size="9">POST /kbm/api/send · POST /srv/api/run</text>
 
 <!-- USB label: FastAPI → Nano_SRV (goes right within PC2) -->
@@ -139,7 +139,7 @@ code{font-family:'Consolas',monospace;background:#1e1e26;padding:1px 5px;border-
 <rect x="464" y="52" width="246" height="70" rx="6" fill="#111115" stroke="#3a3a50"/>
 <text x="587" y="73"  text-anchor="middle" fill="#a78bfa" font-size="10">Pro Micro（插電腦1）</text>
 <text x="587" y="90"  text-anchor="middle" fill="#475569" font-size="9">Serial1 TX1/RX1 ← Nano_KB  (38400)</text>
-<text x="587" y="106" text-anchor="middle" fill="#475569" font-size="9">Serial USB debug → 電腦1  (38400)</text>
+<text x="587" y="106" text-anchor="middle" fill="#475569" font-size="9">Serial USB debug / EVT agent ← 電腦1  (38400)</text>
 
 <!-- USB HID arrow: Pro Micro to OS -->
 <line x1="587" y1="122" x2="587" y2="148" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#ap)"/>
@@ -245,7 +245,7 @@ code{font-family:'Consolas',monospace;background:#1e1e26;padding:1px 5px;border-
 <!-- Mixed script column -->
 <rect x="580" y="34"  width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="660" y="55"  text-anchor="middle" fill="#94a3b8" font-size="9">▶ RUN（混合腳本）</text>
 <line x1="660" y1="68"  x2="660" y2="86"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="580" y="86"  width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="660" y="103" text-anchor="middle" fill="#94a3b8" font-size="9">for each step</text><text x="660" y="114" text-anchor="middle" fill="#475569" font-size="8">await delay_ms</text>
+<rect x="580" y="86"  width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="660" y="100" text-anchor="middle" fill="#94a3b8" font-size="9">for each step</text><text x="660" y="112" text-anchor="middle" fill="#475569" font-size="8">if evt -> wait bus, then delay</text>
 <line x1="660" y1="120" x2="660" y2="138" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
 <polygon points="660,138 720,163 660,188 600,163" fill="none" stroke="#2a2a38"/>
 <text x="660" y="166" text-anchor="middle" fill="#94a3b8" font-size="9">type?</text>
@@ -325,6 +325,7 @@ const kbmRows=[
   ['MOUSE:DOWN/UP L',     'MOUSE:DOWN L',             '按住/放開滑鼠鍵'],
   ['MOUSE:SCROLL n',      'MOUSE:SCROLL -3',          '滾輪，正=上 負=下'],
   ['PING',                '—',                        '連線測試，回 OK PONG'],
+  ['EVT:<name>',          'EVT:HELLO',               '被控端事件，供腳本等待條件使用'],
 ];
 const srvRows=[
   ['ATTACH sid pin',      'ATTACH 1 9',               '掛載 Servo sid 到腳位 pin'],
@@ -389,6 +390,12 @@ const mvpSteps=[
      'Script 加兩個 SRV step，▶ RUN，確認 Progress 2/2 DONE',
      '混合腳本：KBD + SRV step，確認按序執行',
      '確認 Webcam 面板顯示電腦1 螢幕'],tip:''},
+  {n:6,color:'#a78bfa',title:'EVT 事件驅動驗證',desc:'確認被控端主動回傳 EVT 後，控制端腳本會等待後續事件再續跑',
+   prereq:'步驟 1–5 全部通過，且電腦1 上能以 PowerShell 開啟 `tools/send_event.ps1`。',
+   steps:['在控制端執行：<code>python tools/test_evt_flow.py --event HELLO</code>',
+     '在被控端執行：<code>powershell -ExecutionPolicy Bypass -File tools/send_event.ps1 -Port COMx -Event HELLO</code>',
+     '預期：控制端 KBM log 看到 <code>EVT:HELLO</code>，腳本由等待狀態轉成執行狀態',
+     '預期：等待步驟完成後，腳本輸入 <code>EVT:HELLO received</code> 並結束'],tip:'如果要測更複雜條件，可先固定事件名稱，再逐步加入 payload，例如 `EVT:WINDOW_FOUND|title=Setup`。'},
 ];
 const container=document.getElementById('mvp-container');
 mvpSteps.forEach(ms=>{

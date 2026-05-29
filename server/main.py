@@ -13,8 +13,10 @@ import asyncio
 import json
 import logging
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from collections import deque
 from typing import Optional, Any
 
 import cv2
@@ -45,8 +47,193 @@ srv_router, srv_serial, srv_ws = create_servo_router()
 executor   = ThreadPoolExecutor(max_workers=4)
 camera: Optional[cv2.VideoCapture] = None
 
-# 混合腳本執行 task 控制
-_script_task: Optional[asyncio.Task] = None
+# 混合腳本執行 task / queue 控制
+_script_queue: asyncio.Queue["MixedScriptRequest"] = asyncio.Queue()
+_script_runner_task: Optional[asyncio.Task] = None
+
+DEFAULT_EVT_TIMEOUT_MS = int(os.getenv("DEFAULT_EVT_TIMEOUT_MS", "30000"))
+
+
+class EventBus:
+    def __init__(self):
+        self._events = deque()
+        self._lock = asyncio.Lock()
+        self._loop = None
+
+    def set_loop(self, loop):
+        self._loop = loop
+
+    @staticmethod
+    def _normalize(value: str) -> str:
+        value = (value or "").strip()
+        return value[4:].strip() if value.upper().startswith("EVT:") else value
+
+    def _match(self, expected: str, actual: str) -> bool:
+        return self._normalize(expected) == self._normalize(actual)
+
+    async def emit(self, event_line: str):
+        async with self._lock:
+            self._events.append(event_line)
+
+    async def clear(self):
+        async with self._lock:
+            self._events.clear()
+
+    async def consume_if_available(self, expected: str) -> Optional[str]:
+        async with self._lock:
+            for idx, actual in enumerate(self._events):
+                if self._match(expected, actual):
+                    match = self._events[idx]
+                    del self._events[idx]
+                    return match
+        return None
+
+    def emit_sync(self, event_line: str):
+        try:
+            if self._loop and self._loop.is_running():
+                asyncio.run_coroutine_threadsafe(self.emit(event_line), self._loop)
+        except Exception:
+            pass
+
+    async def wait_for(self, expected: str, timeout_ms: Optional[int] = None) -> str:
+        timeout_s = (timeout_ms or DEFAULT_EVT_TIMEOUT_MS) / 1000
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while True:
+            async with self._lock:
+                for idx, actual in enumerate(self._events):
+                    if self._match(expected, actual):
+                        match = self._events[idx]
+                        del self._events[idx]
+                        return match
+            remain = deadline - asyncio.get_running_loop().time()
+            if remain <= 0:
+                raise TimeoutError(f"EVT timeout waiting for {expected}")
+            await asyncio.sleep(min(0.05, remain))
+
+
+event_bus = EventBus()
+
+
+class PendingScriptPool:
+    def __init__(self):
+        self._buckets: dict[str, deque[dict[str, Any]]] = {}
+        self._lock = asyncio.Lock()
+        self._seq = 0
+
+    @staticmethod
+    def _gate_evt(req: "MixedScriptRequest") -> Optional[str]:
+        for step in req.steps:
+            if step.type == "evt":
+                evt = (step.evt or "").strip()
+                if evt:
+                    return evt
+        return None
+
+    @staticmethod
+    def _summary(req: "MixedScriptRequest") -> str:
+        parts = [step.type.upper() for step in req.steps[:5]]
+        if len(req.steps) > 5:
+            parts.append("...")
+        return " → ".join(parts) if parts else "(empty)"
+
+    def _next_id(self) -> int:
+        self._seq += 1
+        return self._seq
+
+    @staticmethod
+    def _consume_gate_step(req: "MixedScriptRequest", gate_evt: str) -> "MixedScriptRequest":
+        new_steps: list[MixedStep] = []
+        consumed = False
+        for step in req.steps:
+            cur_evt = (step.evt or "").strip()
+            if not consumed and step.type == "evt" and cur_evt == gate_evt:
+                consumed = True
+                continue
+            new_steps.append(step)
+        if not consumed:
+            return req.model_copy(deep=True)
+        return req.model_copy(update={"steps": new_steps}, deep=True)
+
+    @staticmethod
+    def _restore_gate_step(req: "MixedScriptRequest", gate_evt: str) -> "MixedScriptRequest":
+        steps = [MixedStep(type="evt", delay_ms=0, evt=gate_evt)]
+        steps.extend(step.model_copy(deep=True) for step in req.steps)
+        return req.model_copy(update={"steps": steps}, deep=True)
+
+    async def hold(self, req: "MixedScriptRequest") -> Optional[str]:
+        gate = self._gate_evt(req)
+        if not gate:
+            return None
+        req_ready = self._consume_gate_step(req, gate)
+        req_editor = req.model_copy(deep=True)
+        async with self._lock:
+            bucket = self._buckets.setdefault(gate, deque())
+            bucket.append({
+                "id": self._next_id(),
+                "gate_evt": gate,
+                "created_at": time.time(),
+                "req": req_ready,
+                "req_editor": req_editor,
+                "summary": self._summary(req),
+            })
+        return gate
+
+    async def drain(self, evt: str) -> list[dict[str, Any]]:
+        async with self._lock:
+            bucket = self._buckets.pop(evt, deque())
+            return list(bucket)
+
+    async def peek(self, evt: str) -> Optional[dict[str, Any]]:
+        async with self._lock:
+            bucket = self._buckets.get(evt)
+            if not bucket:
+                return None
+            item = bucket[0]
+            req_editor = item.get("req_editor")
+            if req_editor is None:
+                req_editor = self._restore_gate_step(item["req"], evt)
+            return {
+                "id": item["id"],
+                "evt": evt,
+                "req": req_editor.model_dump(),
+            }
+
+    async def delete_bucket(self, evt: str) -> int:
+        async with self._lock:
+            bucket = self._buckets.pop(evt, deque())
+            return len(bucket)
+
+    async def clear(self):
+        async with self._lock:
+            self._buckets.clear()
+
+    async def snapshot(self) -> dict[str, Any]:
+        async with self._lock:
+            now = time.time()
+            buckets = []
+            total = 0
+            for evt in sorted(self._buckets.keys()):
+                items = list(self._buckets[evt])
+                total += len(items)
+                buckets.append({
+                    "evt": evt,
+                    "count": len(items),
+                    "scripts": [
+                        {
+                            "id": item["id"],
+                            "gate_evt": item["gate_evt"],
+                            "steps": len(item["req"].steps),
+                            "loop": item["req"].loop,
+                            "age_s": round(now - item["created_at"], 1),
+                            "summary": item["summary"],
+                        }
+                        for item in items
+                    ],
+                })
+            return {"total": total, "buckets": buckets}
+
+
+pending_evt_pool = PendingScriptPool()
 
 # ── KBM WebSocket 管理器 ──────────────────────────────────────
 class KbmWSManager:
@@ -92,12 +279,62 @@ kbm_ws = KbmWSManager()
 def _setup_kbm_callbacks():
     def on_line(line: str):
         kbm_ws.broadcast_sync({"type": "serial", "line": line})
+        if line.startswith("EVT:"):
+            evt = line[4:].strip()
+            kbm_ws.broadcast_sync({"type": "event", "evt": evt, "raw": line})
+            try:
+                if kbm_ws._loop and kbm_ws._loop.is_running():
+                    asyncio.run_coroutine_threadsafe(_emit_event_and_release(evt), kbm_ws._loop)
+            except Exception:
+                pass
+    def on_send(cmd: str):
+        kbm_ws.broadcast_sync({"type": "serial", "line": f"→ {cmd}"})
     def on_disconnect():
         kbm_ws.broadcast_sync({"type": "status", "state": "disconnected", "port": None})
     kb_serial.on_line(on_line)
+    kb_serial.on_send(on_send)
     kb_serial.on_disconnect(on_disconnect)
 
 _setup_kbm_callbacks()
+
+
+async def _notify_pool_snapshot():
+    snap = await pending_evt_pool.snapshot()
+    await kbm_ws.broadcast({"type": "script_pool", **snap})
+    srv_ws.broadcast_sync({"type": "script_pool", **snap})
+
+
+async def _activate_script(req: "MixedScriptRequest") -> int:
+    await _ensure_script_runner()
+    await _script_queue.put(req)
+    return _script_queue.qsize()
+
+
+async def _release_pending_for_event(evt: str, source: str = "event"):
+    released = await pending_evt_pool.drain(evt)
+    if not released:
+        return 0
+    released_ids = []
+    released_cnt = 0
+    for item in released:
+        await _activate_script(item["req"])
+        released_cnt += 1
+        released_ids.append(item["id"])
+    await _notify_pool_snapshot()
+    await kbm_ws.broadcast({
+        "type": "script_pool_released",
+        "evt": evt,
+        "source": source,
+        "released": released_cnt,
+        "ids": released_ids,
+        "queued": _script_queue.qsize(),
+    })
+    return released_cnt
+
+
+async def _emit_event_and_release(evt: str):
+    await event_bus.emit(evt)
+    await _release_pending_for_event(evt, source="event")
 
 # ── Lifespan ─────────────────────────────────────────────────
 @asynccontextmanager
@@ -106,6 +343,7 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     srv_ws.set_loop(loop)
     kbm_ws.set_loop(loop)
+    event_bus.set_loop(loop)
     logger.info(f"Opening camera index: {CAMERA_INDEX}")
     camera = cv2.VideoCapture(CAMERA_INDEX)
     yield
@@ -134,8 +372,9 @@ class ConnectRequest(BaseModel):
 
 # ── 混合腳本步驟 ──────────────────────────────────────────────
 class MixedStep(BaseModel):
-    type:        str              = Field(..., pattern="^(srv|kbd|mse)$")
+    type:        str              = Field(..., pattern="^(srv|kbd|mse|evt)$")
     delay_ms:    int              = Field(0,   ge=0)
+    evt:         Optional[str]    = None   # EVT step name; legacy non-EVT steps are normalized on input
     # SRV
     servo_id:    Optional[int]   = Field(None, ge=1, le=6)
     angle:       Optional[int]   = Field(None, ge=0, le=180)
@@ -203,9 +442,55 @@ def _resolve_mse_cmd(step: MixedStep) -> str:
     return f"MOUSE:MOVE 0 0"
 
 
+def _normalize_script_request(req: MixedScriptRequest) -> MixedScriptRequest:
+    """Convert legacy per-step evt gates into standalone EVT steps."""
+    normalized_steps: list[MixedStep] = []
+    for step in req.steps:
+        evt_name = (step.evt or "").strip()
+        if step.type != "evt" and evt_name:
+            normalized_steps.append(MixedStep(type="evt", delay_ms=0, evt=evt_name))
+            step = step.model_copy(update={"evt": None})
+        normalized_steps.append(step)
+    return req.model_copy(update={"steps": normalized_steps})
+
+
 # ═══════════════════════════════════════════════════════════════
 #  Mixed Script 後端執行引擎
 # ═══════════════════════════════════════════════════════════════
+async def _wait_for_step_event(step: MixedStep, idx: int, total: int) -> bool:
+    if not step.evt:
+        return True
+    await kbm_ws.broadcast({
+        "type": "script_wait",
+        "step": idx,
+        "total": total,
+        "evt": step.evt,
+    })
+    srv_ws.broadcast_sync({
+        "type": "status",
+        "state": "waiting",
+        "step": idx,
+        "total": total,
+    })
+    try:
+        matched = await event_bus.wait_for(step.evt)
+        await kbm_ws.broadcast({
+            "type": "script_event",
+            "step": idx,
+            "total": total,
+            "evt": matched,
+        })
+        return True
+    except TimeoutError as exc:
+        await kbm_ws.broadcast({
+            "type": "script_error",
+            "step": idx,
+            "message": str(exc),
+        })
+        srv_ws.broadcast_sync({"type": "status", "state": "idle"})
+        return False
+
+
 async def _run_mixed_script(req: MixedScriptRequest):
     """後端逐步執行混合腳本，透過 WS 推播進度"""
     loop = asyncio.get_event_loop()
@@ -238,9 +523,17 @@ async def _run_mixed_script(req: MixedScriptRequest):
                     "total": total,
                 })
 
+                if step.type == "evt":
+                    ok_evt = await _wait_for_step_event(step, i, total)
+                    if not ok_evt:
+                        return
+
                 # delay
                 if step.delay_ms > 0:
                     await asyncio.sleep(step.delay_ms / 1000)
+
+                if step.type == "evt":
+                    continue
 
                 # 執行
                 if step.type == "srv":
@@ -306,6 +599,37 @@ async def _run_mixed_script(req: MixedScriptRequest):
         logger.info("Script cancelled")
 
 
+async def _script_runner():
+    global _script_runner_task
+    try:
+        while True:
+            req = await _script_queue.get()
+            try:
+                await _run_mixed_script(req)
+            finally:
+                _script_queue.task_done()
+            if _script_queue.empty():
+                break
+    except asyncio.CancelledError:
+        raise
+    finally:
+        _script_runner_task = None
+
+
+async def _ensure_script_runner():
+    global _script_runner_task
+    if _script_runner_task is None or _script_runner_task.done():
+        _script_runner_task = asyncio.create_task(_script_runner())
+
+
+async def _drain_script_queue():
+    while True:
+        try:
+            _script_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+
+
 # ═══════════════════════════════════════════════════════════════
 #  Routes: 頁面
 # ═══════════════════════════════════════════════════════════════
@@ -360,7 +684,6 @@ async def kbm_send(event: KeyEvent):
         executor, kb_serial.send, cmd
     )
     if result == "OK":
-        kbm_ws.broadcast_sync({"type": "serial", "line": f"→ {cmd}"})
         return {"status": "ok", "cmd": cmd}
     raise HTTPException(500, {"status": result, "cmd": cmd})
 
@@ -378,18 +701,40 @@ async def script_run(req: MixedScriptRequest):
            -H "Content-Type: application/json" \\
            --data-binary "@exported_script.json"
     """
-    global _script_task
+    req = _normalize_script_request(req)
 
     if not req.steps:
         raise HTTPException(400, "steps 不能為空")
+    if any(step.type == "evt" and not (step.evt or "").strip() for step in req.steps):
+        raise HTTPException(400, "EVT step 需要 evt 名稱")
 
-    # 停掉舊的（若有）
-    if _script_task and not _script_task.done():
-        _script_task.cancel()
-        try:
-            await _script_task
-        except asyncio.CancelledError:
-            pass
+    gate_evt = None
+    for step in req.steps:
+        if step.type == "evt":
+            gate_evt = (step.evt or "").strip()
+            if gate_evt:
+                break
+
+    if (_script_runner_task is None or _script_runner_task.done()) and _script_queue.empty():
+        await event_bus.clear()
+
+    if gate_evt:
+        immediate = await event_bus.consume_if_available(gate_evt)
+        if immediate is None:
+            await pending_evt_pool.hold(req)
+            await _notify_pool_snapshot()
+            return {
+                "ok": True,
+                "steps": len(req.steps),
+                "loop": req.loop,
+                "pending": True,
+                "gate_evt": gate_evt,
+                "queued": _script_queue.qsize(),
+            }
+            req = PendingScriptPool._consume_gate_step(req, gate_evt)
+
+    queued = await _activate_script(req)
+    await _notify_pool_snapshot()
 
     # auto-attach servos 需要的 sid
     if srv_serial.is_connected:
@@ -409,22 +754,27 @@ async def script_run(req: MixedScriptRequest):
             if not ok:
                 raise HTTPException(500, f"Auto ATTACH 失敗 sid={sid}")
 
-    _script_task = asyncio.create_task(_run_mixed_script(req))
     return {
         "ok":    True,
         "steps": len(req.steps),
         "loop":  req.loop,
+        "pending": False,
+        "queued": queued,
     }
 
 @app.post("/script/stop")
 async def script_stop():
-    global _script_task
-    if _script_task and not _script_task.done():
-        _script_task.cancel()
+    global _script_runner_task
+    if _script_runner_task and not _script_runner_task.done():
+        _script_runner_task.cancel()
         try:
-            await _script_task
+            await _script_runner_task
         except asyncio.CancelledError:
             pass
+    await _drain_script_queue()
+    await event_bus.clear()
+    await pending_evt_pool.clear()
+    await _notify_pool_snapshot()
     # 也停 Servo
     if srv_serial.is_connected:
         srv_serial.send("STOP")
@@ -432,8 +782,39 @@ async def script_stop():
 
 @app.get("/script/status")
 async def script_status():
-    running = bool(_script_task and not _script_task.done())
-    return {"running": running}
+    running = bool(_script_runner_task and not _script_runner_task.done())
+    pending = await pending_evt_pool.snapshot()
+    return {"running": running, "queued": _script_queue.qsize(), "pending": pending}
+
+
+@app.get("/script/pool/{evt}")
+async def script_pool_peek(evt: str):
+    item = await pending_evt_pool.peek(evt)
+    if not item:
+        raise HTTPException(404, "找不到對應 EVT bucket")
+    return {"ok": True, **item}
+
+
+@app.delete("/script/pool/{evt}")
+async def script_pool_delete(evt: str):
+    deleted = await pending_evt_pool.delete_bucket(evt)
+    if deleted == 0:
+        raise HTTPException(404, "找不到對應 EVT bucket")
+    await _notify_pool_snapshot()
+    return {"ok": True, "evt": evt, "deleted": deleted}
+
+
+@app.post("/script/pool/{evt}/queue_now")
+async def script_pool_queue_now(evt: str):
+    released = await _release_pending_for_event(evt, source="manual")
+    if released == 0:
+        raise HTTPException(404, "找不到對應 EVT bucket")
+    return {
+        "ok": True,
+        "evt": evt,
+        "released": released,
+        "queued": _script_queue.qsize(),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -483,7 +864,8 @@ async def ws_srv(ws: WebSocket):
 # ═══════════════════════════════════════════════════════════════
 @app.get("/health")
 async def health():
-    running = bool(_script_task and not _script_task.done())
+    running = bool(_script_runner_task and not _script_runner_task.done())
+    pending = await pending_evt_pool.snapshot()
     return {
         "kbm": {
             "connected": kb_serial.is_connected,
@@ -500,6 +882,8 @@ async def health():
         },
         "script": {
             "running": running,
+            "queued": _script_queue.qsize(),
+            "pending": pending,
         },
     }
 

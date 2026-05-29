@@ -22,6 +22,7 @@ class KeyboardSerial:
         self._serial:        Optional[serial.Serial] = None
         self._lock           = threading.Lock()
         self._on_line:       Optional[Callable[[str], None]] = None
+        self._on_send:       Optional[Callable[[str], None]] = None
         self._on_disconnect: Optional[Callable[[], None]]   = None
         self._thread:        Optional[threading.Thread]     = None
         self._running        = False
@@ -30,6 +31,9 @@ class KeyboardSerial:
     # ── callbacks ─────────────────────────────────────────────
     def on_line(self, cb: Callable[[str], None]):
         self._on_line = cb
+
+    def on_send(self, cb: Callable[[str], None]):
+        self._on_send = cb
 
     def on_disconnect(self, cb: Callable[[], None]):
         self._on_disconnect = cb
@@ -99,9 +103,12 @@ class KeyboardSerial:
                 # 清空舊 ACK，避免前一筆殘留訊息影響本次判斷
                 self._drain_ack_queue()
                 ser.reset_input_buffer()
-                ser.write(f"{cmd.strip()}\n".encode())
+                outbound = cmd.strip()
+                ser.write(f"{outbound}\n".encode())
                 ser.flush()
-                logger.debug(f"KBM >> {cmd}")
+                logger.debug(f"KBM >> {outbound}")
+                if self._on_send:
+                    self._on_send(outbound)
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
                     remain = deadline - time.monotonic()
@@ -139,7 +146,8 @@ class KeyboardSerial:
                 if raw:
                     line = raw.decode("utf-8", errors="replace").strip()
                     if line:
-                        self._ack_queue.put(line)
+                        if not line.startswith("EVT:"):
+                            self._ack_queue.put(line)
                         if self._on_line:
                             self._on_line(line)
             except serial.SerialException as e:

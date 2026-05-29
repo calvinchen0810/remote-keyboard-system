@@ -18,6 +18,8 @@ SoftwareSerial proMicro(10, 11);  // RX=D10, TX=D11
 void setup() {
     Serial.begin(38400);
     proMicro.begin(38400);
+    Serial.setTimeout(20);
+    proMicro.setTimeout(20);
     Serial.println("[Nano_KB] Bridge ready. 38400 baud.");
 }
 

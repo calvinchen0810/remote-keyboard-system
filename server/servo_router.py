@@ -116,11 +116,15 @@ def create_servo_router() -> tuple[APIRouter, ServoSerial, SrvWSManager]:
         elif line.startswith("ERR"):
             ws_mgr.broadcast_sync({"type": "error", "message": line})
 
+    def on_serial_send(cmd: str):
+        ws_mgr.broadcast_sync({"type": "serial", "line": f"→ {cmd}"})
+
     def on_disconnect():
         ws_mgr.broadcast_sync({"type": "status", "state": "disconnected",
                                 "port": None, "attached": {}})
 
     serial_mgr.on_line(on_serial_line)
+    serial_mgr.on_send(on_serial_send)
     serial_mgr.on_disconnect(on_disconnect)
 
     # ── WebSocket /ws/srv ─────────────────────────────────────

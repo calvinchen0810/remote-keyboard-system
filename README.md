@@ -85,8 +85,10 @@ rks/
 │       ├── index.html                    ← 整合版 UI
 │       └── arch.html                     ← 架構圖 & MVP 計畫
 └── tools/
-    ├── test_promicro.py                  ← MVP Step 1
-    └── test_nano_servo.py                ← MVP Step 2
+  ├── test_promicro.py                  ← MVP Step 1
+  ├── test_nano_servo.py                ← MVP Step 2
+  ├── test_evt_flow.py                  ← EVT 腳本等待測試
+  └── send_event.ps1                    ← 被控端 PowerShell 事件來源
 ```
 
 ---
@@ -116,7 +118,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 | POST | `/kbm/api/connect` | `{"port":"COM3"}` |
 | POST | `/kbm/api/disconnect` | — |
 | POST | `/kbm/api/send` | `{"cmd":"TYPE:hello"}` |
-| WS | `/ws/kbm` | KBM 狀態 + 腳本進度推播 |
+| WS | `/ws/kbm` | KBM 狀態 + 腳本進度推播 + EVT 事件 |
 | GET | `/srv/api/ports` | SRV 可用串口 |
 | POST | `/srv/api/connect` | `{"port":"COM4"}` |
 | POST | `/srv/api/disconnect` | — |
@@ -130,7 +132,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 | WS | `/ws/srv` | SRV 狀態推播 |
 | **POST** | **`/script/run`** | **混合腳本（SRV+KBD+MSE）** |
 | **POST** | **`/script/stop`** | **停止混合腳本** |
-| GET | `/script/status` | `{"running":true/false}` |
+| GET | `/script/status` | `{"running":true/false,"queued":0,"pending":{"total":0,"buckets":[]}}` |
 
 ---
 
@@ -181,6 +183,11 @@ JSON 格式：
       "text": "hello world"
     },
     {
+      "type": "evt",
+      "delay_ms": 0,
+      "evt": "HELLO"
+    },
+    {
       "type": "kbd",
       "delay_ms": 0,
       "cmd_type": "KEY",
@@ -214,6 +221,7 @@ JSON 格式：
 ```json
 { "type": "kbd", "delay_ms": 0, "cmd": "COMBO:CTRL+ALT+DELETE" }
 { "type": "mse", "delay_ms": 0, "cmd": "MOUSE:CLICK L" }
+{ "type": "evt", "delay_ms": 0, "evt": "HELLO" }
 ```
 
 ### 停止執行中的腳本
@@ -226,7 +234,7 @@ curl -X POST http://127.0.0.1:8000/script/stop
 
 ```bash
 curl http://127.0.0.1:8000/script/status
-# {"running": true}
+# {"running": true, "queued": 0, "pending": {"total": 1, "buckets": [{"evt":"HELLO","count":1}]}}
 ```
 
 ---
@@ -247,6 +255,25 @@ curl http://127.0.0.1:8000/script/status
 | `MOUSE:DOWN/UP L` | 按住/放開 |
 | `MOUSE:SCROLL n` | 滾輪，正=上 負=下 |
 | `PING` | 連線測試 |
+| `EVT:<name>` | 被控端回傳事件，供腳本等待條件使用 |
+
+---
+
+## 事件驅動腳本（EVT）
+
+當腳本中包含 `type: "evt"` 步驟時，後端會先把整份腳本放入 EVT Pending Pool（依事件名分桶），不會先進 runnable queue，也不會套用 timeout。
+
+當被控端回傳對應的 `EVT:<name>` 後，該事件桶中的腳本會被依序搬到 runnable queue，等目前任務完成後再接續執行，不會插隊打斷正在進行的任務。
+
+前端右側會顯示 `EVT Pool`，可看到每個事件名 bucket 的 pending 數量與首筆腳本摘要。
+
+建議事件格式：
+
+```text
+EVT:HELLO
+EVT:APP_READY
+EVT:WINDOW_FOUND|title=Setup
+```
 
 ---
 
@@ -261,3 +288,4 @@ curl http://127.0.0.1:8000/script/status
 | 3 | Nano_SRV Servo | `python tools/test_nano_servo.py` |
 | 4 | FastAPI 串口連線 | `GET /health` |
 | 5 | 完整端對端 + curl 腳本 | 網頁操作 + curl |
+| 6 | EVT 事件驅動腳本 | `python tools/test_evt_flow.py` + `powershell -ExecutionPolicy Bypass -File .\tools\send_event.ps1` |

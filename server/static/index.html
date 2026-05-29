@@ -128,6 +128,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .b-srv{background:rgba(245,158,11,.12);color:#d97706;border:1px solid rgba(245,158,11,.3)}
 .b-kbd{background:rgba(167,139,250,.12);color:#8b5cf6;border:1px solid rgba(167,139,250,.3)}
 .b-mse{background:rgba(239,68,68,.1);color:#f87171;border:1px solid rgba(239,68,68,.25)}
+.b-evt{background:rgba(56,189,248,.1);color:#38bdf8;border:1px solid rgba(56,189,248,.28)}
 .ti{font-family:var(--mono);font-size:11px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:2px 4px;text-align:center;min-height:22px}
 .ti:hover{border-color:var(--grn2)}
 .ti-s{font-family:var(--mono);font-size:11px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:2px 3px;min-height:22px}
@@ -157,9 +158,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .sl{display:flex;gap:6px}
 .sts{color:var(--fg3);font-size:9px;line-height:1.8;flex-shrink:0}
 .cok{color:var(--grn)}.crun{color:var(--amb)}.cerr{color:var(--red)}.csnd{color:var(--blu)}.cdim{color:var(--fg2)}.catt{color:#a3e635}
+.cevt{color:var(--pur)}
 #man-row{display:flex;align-items:center;gap:4px;padding:4px 8px;border-top:1px solid var(--bd);flex-shrink:0}
 #quick-btns{display:flex;gap:4px;padding:5px 8px}
 #prog-badge{font-family:var(--mono);font-size:9px;color:var(--amb);border:1px solid var(--amb);padding:1px 4px;border-radius:2px;margin-left:5px;display:none;animation:pulse 1.5s infinite}
+#evt-pool-body{padding:6px 8px;display:flex;flex-direction:column;gap:4px;max-height:130px;overflow:auto}
+.evt-head{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:9px;color:var(--fg2)}
+.evt-bucket{border:1px solid var(--bd);border-radius:3px;padding:3px 5px;background:var(--card)}
+.evt-row{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:10px;color:var(--blu)}
+.evt-meta{font-family:var(--mono);font-size:9px;color:var(--fg3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.evt-acts{display:flex;gap:4px;margin-top:4px}
+.evt-acts .btn-sm{padding:1px 5px}
 
 /* keyboard fixed bottom */
 #kb-panel{background:var(--panel);border-top:1px solid var(--br);flex-shrink:0}
@@ -336,6 +345,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     <button class="btn-a btn-sm" onclick="addSrvStep()">＋ SRV</button>
     <button class="btn-p btn-sm" onclick="addKbdStep()">＋ KBD</button>
     <button class="btn-r btn-sm" onclick="addMseStep()">＋ MSE</button>
+    <button class="btn-b btn-sm" onclick="addEvtStep()">＋ EVT</button>
     <div style="width:1px;height:12px;background:var(--bd);margin:0 2px"></div>
     <div style="display:flex;align-items:center;gap:3px;font-family:var(--mono);font-size:9px;color:var(--fg3)">
       ms:<input type="number" id="default-delay" value="1000" min="0" max="30000" step="500"
@@ -347,6 +357,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     </label>
     <button class="btn-sm" onclick="importJSON()">Import</button>
     <button class="btn-sm" onclick="exportJSON()">Export</button>
+    <button class="btn-r btn-sm" onclick="clearAllSteps()">Clear All</button>
     <button class="btn-g btn-sm" id="run-btn" onclick="runScript()">▶ RUN</button>
     <button class="btn-r btn-sm" onclick="stopScript()">■ STOP</button>
   </div>
@@ -384,6 +395,15 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     </div>
     <div class="pn-trk"><div class="pn-fill" id="prog-fill"></div></div>
     <div class="pn-msg" id="prog-msg">Idle</div>
+  </div>
+
+  <div class="pn" style="flex-shrink:0">
+    <div class="ph">EVT Pool
+      <span id="evt-pool-total" style="font-size:9px;color:var(--blu);margin-left:4px">0</span>
+    </div>
+    <div id="evt-pool-body">
+      <div class="evt-head"><span>pending</span><span>0</span></div>
+    </div>
   </div>
 
   <div class="pn" id="smon" style="flex:1;min-height:0">
@@ -557,6 +577,7 @@ let logLines={srv:[],kbm:[]}, activeLog='srv';
 let steps=[], stepIdCnt=0, dragSrc=null;
 let kbLocked=false, modState={CTRL:false,SHIFT:false,ALT:false,GUI:false};
 let homeVal=1;
+let evtPoolState={total:0,buckets:[]};
 
 // ── Drag resize ──────────────────────────────────────────────
 (()=>{
@@ -583,7 +604,7 @@ function showPop(inp,title,mn,mx,stp,rev=false){
   if(l+200>window.innerWidth-8)l=window.innerWidth-208;
   if(t<4)t=r.bottom+4;
   pop.style.left=l+'px';pop.style.top=t+'px';pop.classList.add('show');
-  const sync=v=>{let n=Math.max(mn,Math.min(mx,parseInt(v)||mn));if(stp>1)n=Math.round(n/stp)*stp;pr.value=n;pn.value=n;inp.value=n;if(inp.id==='ss-angle')drawCanvas();};
+  const sync=v=>{let n=Math.max(mn,Math.min(mx,parseInt(v)||mn));if(stp>1)n=Math.round(n/stp)*stp;pr.value=n;pn.value=n;inp.value=n;inp.dispatchEvent(new Event('input',{bubbles:true}));if(inp.id==='ss-angle')drawCanvas();};
   pr.oninput=()=>sync(pr.value);pn.oninput=()=>sync(pn.value);
   setTimeout(()=>{const c=e=>{if(!pop.contains(e.target)&&e.target!==popTarget){pop.classList.remove('show');document.removeEventListener('click',c);}};document.addEventListener('click',c);},0);
 }
@@ -664,7 +685,24 @@ function addSrvStep(){
 }
 function addKbdStep(){steps.push({type:'kbd',_id:++stepIdCnt,delay_ms:getDefaultDelay(),cmd_type:'COMBO',mod1:'CTRL',mod2:'',key:'C'});renderSteps();}
 function addMseStep(){steps.push({type:'mse',_id:++stepIdCnt,delay_ms:getDefaultDelay(),action:'MOVE',x:0,y:0,btn:'L',amount:3});renderSteps();}
+function addEvtStep(){steps.unshift({type:'evt',_id:++stepIdCnt,delay_ms:0,evt:'HELLO'});renderSteps();}
+function clearAllSteps(){steps=[];renderSteps();}
 function delStep(id){steps=steps.filter(s=>s._id!==id);renderSteps();}
+
+function normalizeImportedSteps(rawSteps){
+  const out=[];
+  (rawSteps||[]).forEach(step=>{
+    const evtName=(step.evt||'').trim();
+    if(step.type!=='evt'&&evtName){
+      out.push({type:'evt',delay_ms:0,evt:evtName});
+      const {evt,...rest}=step;
+      out.push(rest);
+    } else {
+      out.push(step);
+    }
+  });
+  return out;
+}
 
 function renderSteps(){
   const tb=document.getElementById('steps-tbody'),hint=document.getElementById('empty-hint');
@@ -673,7 +711,10 @@ function renderSteps(){
   steps.forEach((s,i)=>{
     const tr=document.createElement('tr');tr.dataset.idx=i;tr.draggable=true;
     let params='';
-    if(s.type==='srv'){
+    if(s.type==='evt'){
+      params=`<span style="color:var(--fg3);font-size:9px">wait</span>
+        <input class="ti" value="${esc(s.evt||'HELLO')}" style="width:calc(100% - 38px)" placeholder="EVT name" oninput="updStep(${s._id},'evt',this.value)">`;
+    } else if(s.type==='srv'){
       const sidOpts=[1,2,3,4,5,6].map(n=>`<option${n===s.servo_id?' selected':''}>${n}</option>`).join('');
       params=`<select class="ti-s" style="width:28px;color:var(--amb);font-weight:bold" onchange="updStep(${s._id},'servo_id',parseInt(this.value))">${sidOpts}</select>
         <input class="ti pop-inp" value="${s.angle}" style="width:26px" oninput="updStep(${s._id},'angle',this.value)" onclick="event.stopPropagation();showPop(this,'ANGLE °',0,180,1,true)">°
@@ -690,8 +731,8 @@ function renderSteps(){
       if(s.cmd_type==='COMBO'){
         const MODS=['','CTRL','SHIFT','ALT','WIN'];
         const mk=cur=>MODS.map(m=>`<option value="${m==='WIN'?'GUI':m}"${(m==='WIN'?'GUI':m)===cur?' selected':''}>${m||'—'}</option>`).join('');
-        fields=`<select class="ti-s" style="width:40px" onchange="updStep(${s._id},'mod1',this.value)">${mk(s.mod1)}</select>+
-          <select class="ti-s" style="width:40px" onchange="updStep(${s._id},'mod2',this.value)">${mk(s.mod2)}</select>+
+        fields=`<select class="ti-s" style="width:54px" onchange="updStep(${s._id},'mod1',this.value)">${mk(s.mod1)}</select>+
+          <select class="ti-s" style="width:54px" onchange="updStep(${s._id},'mod2',this.value)">${mk(s.mod2)}</select>+
           <input class="ti" value="${esc(s.key||'C')}" style="width:28px;text-transform:uppercase" oninput="updStep(${s._id},'key',this.value.toUpperCase())">`;
       } else if(s.cmd_type==='TYPE'){
         fields=`<input class="ti" value="${esc(s.text||'')}" style="width:calc(100% - 70px)" oninput="updStep(${s._id},'text',this.value)">`;
@@ -699,7 +740,7 @@ function renderSteps(){
         const SKEYS=['ENTER','ESC','TAB','DELETE','UP','DOWN','LEFT','RIGHT','HOME','END','PAGEUP','PAGEDOWN','F1','F2','F3','F4','F5'];
         fields=`<select class="ti-s" style="width:80px" onchange="updStep(${s._id},'key',this.value)">${SKEYS.map(k=>`<option${k===(s.key||'ENTER')?' selected':''}>${k}</option>`).join('')}</select>`;
       }
-      params=`<select class="ti-s" style="width:52px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>
+      params=`<select class="ti-s" style="width:72px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>
         <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px">${fields}</span>`;
     } else {
       const ACTS=['MOVE','MOVE_TO','CLICK','DBLCLICK','SCROLL'];
@@ -714,12 +755,13 @@ function renderSteps(){
       } else {
         fields=`<span style="color:var(--fg3);font-size:9px">amt</span><input class="ti" value="${s.amount||3}" style="width:30px" oninput="updStep(${s._id},'amount',this.value)">`;
       }
-      params=`<select class="ti-s" style="width:64px" onchange="updStepMse(${s._id},this.value)">${asel}</select>
+      params=`<select class="ti-s" style="width:84px" onchange="updStepMse(${s._id},this.value)">${asel}</select>
         <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px">${fields}</span>`;
     }
     const badge=s.type==='srv'?'<span class="badge b-srv">SRV</span>':
-                s.type==='kbd'?'<span class="badge b-kbd">KBD</span>':
-                               '<span class="badge b-mse">MSE</span>';
+          s.type==='kbd'?'<span class="badge b-kbd">KBD</span>':
+          s.type==='mse'?'<span class="badge b-mse">MSE</span>':
+                   '<span class="badge b-evt">EVT</span>';
     tr.innerHTML=`<td class="drag-col">⠿</td><td>${badge}</td>
       <td><input class="ti pop-inp" value="${s.delay_ms}" style="width:38px"
           oninput="updStep(${s._id},'delay_ms',this.value)"
@@ -739,8 +781,16 @@ function updStepMse(id,t){const s=steps.find(x=>x._id===id);if(s){s.action=t;ren
 
 function exportJSON(){
   const out=steps.map(({_id,...s})=>s);
+  const attachCmds=Object.entries(attachedMap)
+    .sort((a,b)=>parseInt(a[0])-parseInt(b[0]))
+    .map(([sid,pin])=>`ATTACH ${sid} ${pin}`);
   const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([JSON.stringify({loop:document.getElementById('loop-cb').checked,steps:out},null,2)],{type:'application/json'}));
+  a.href=URL.createObjectURL(new Blob([JSON.stringify({
+    loop:document.getElementById('loop-cb').checked,
+    servos:attachedMap,
+    attach_cmds:attachCmds,
+    steps:out
+  },null,2)],{type:'application/json'}));
   a.download='rks_script.json';a.click();
 }
 function importJSON(){document.getElementById('file-input').click();}
@@ -749,7 +799,7 @@ function handleImport(e){
   const r=new FileReader();
   r.onload=ev=>{try{const d=JSON.parse(ev.target.result);
     if(typeof d.loop==='boolean')document.getElementById('loop-cb').checked=d.loop;
-    if(Array.isArray(d.steps)){steps=d.steps.map(s=>({...s,_id:++stepIdCnt}));renderSteps();addLog('srv','Imported '+steps.length+' steps','cok');}
+    if(Array.isArray(d.steps)){steps=normalizeImportedSteps(d.steps).map(s=>({...s,_id:++stepIdCnt}));renderSteps();addLog('srv','Imported '+steps.length+' steps','cok');}
   }catch{addLog('srv','✘ Invalid JSON','cerr');}};
   r.readAsText(file);e.target.value='';
 }
@@ -769,9 +819,14 @@ async function runScript(){
     body:JSON.stringify(body)});
   const d=await r.json().catch(()=>({}));
   if(r.ok){
-    addLog('srv',`→ SCRIPT RUN  ${steps.length} steps  loop=${loop}`,'csnd');
-    document.getElementById('prog-badge').style.display='';
-    setProgress(0,steps.length);
+    if(d.pending){
+      addLog('srv',`→ SCRIPT PENDING EVT:${d.gate_evt}  steps=${steps.length}`,'crun');
+      setProgMsg(`⌛ pending EVT:${d.gate_evt}`);
+    } else {
+      addLog('srv',`→ SCRIPT ENQUEUED  ${steps.length} steps  loop=${loop}  queued=${d.queued||0}`,'csnd');
+      document.getElementById('prog-badge').style.display='';
+      setProgress(0,steps.length);
+    }
   } else {
     addLog('srv','✘ '+(d.detail||'run failed'),'cerr');
   }
@@ -837,14 +892,12 @@ function mouseClick(btn){
 // ── API ──────────────────────────────────────────────────────
 async function kbmSend(cmd){
   if(kbLocked)return;
-  addLog('kbm','→ '+cmd,'csnd');
   const r=await fetch('/kbm/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})});
   if(!r.ok){const d=await r.json().catch(()=>({}));addLog('kbm','✘ '+(d.detail?.status||r.status),'cerr');}
 }
 async function srvRaw(cmd){
   const r=await fetch('/srv/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})});
-  if(r.ok) addLog('srv','→ '+cmd,'csnd');
-  else addLog('srv','✘ not connected','cerr');
+  if(!r.ok) addLog('srv','✘ not connected','cerr');
 }
 async function srvStop(){await fetch('/srv/api/stop',{method:'POST'});addLog('srv','→ SRV STOP','csnd');}
 // stopScript: 停止混合腳本 + SRV
@@ -891,7 +944,7 @@ async function kbmToggleConnect(){
 function applySrvStatus(msg){
   srvState=msg.state||'disc';
   const led=document.getElementById('srv-led');
-  led.className='led '+(srvState==='running'?'led-amb':srvState==='idle'?'led-grn':'led-dim');
+  led.className='led '+(srvState==='running'||srvState==='waiting'?'led-amb':srvState==='idle'?'led-grn':'led-dim');
   const btn=document.getElementById('srv-conn-btn');
   btn.textContent=srvState==='disc'?'CONNECT':'DISCONNECT';
   btn.className=srvState==='disc'?'btn-g btn-sm':'btn-r btn-sm';
@@ -908,17 +961,89 @@ function updateKbmLed(){
   btn.className=kbmState==='idle'?'btn-r btn-sm':'btn-b btn-sm';
 }
 function intKeys(o){const r={};Object.entries(o).forEach(([k,v])=>{r[parseInt(k)]=v;});return r;}
+async function loadEvtBucket(evt){
+  try{
+    const d=await fetch('/script/pool/'+encodeURIComponent(evt)).then(r=>r.json());
+    if(!d||!d.req||!Array.isArray(d.req.steps)){addLog('srv','✘ EVT bucket payload invalid','cerr');return;}
+    if(typeof d.req.loop==='boolean')document.getElementById('loop-cb').checked=d.req.loop;
+    steps=(d.req.steps||[]).map(s=>({...s,_id:++stepIdCnt}));
+    renderSteps();
+    addLog('srv',`→ EVT:${evt} loaded to editor (${steps.length} steps)`,'csnd');
+  }catch(_){
+    addLog('srv',`✘ load EVT:${evt} failed`,'cerr');
+  }
+}
+async function deleteEvtBucket(evt){
+  try{
+    const r=await fetch('/script/pool/'+encodeURIComponent(evt),{method:'DELETE'});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){addLog('srv',`✘ delete EVT:${evt} failed`,'cerr');return;}
+    addLog('srv',`→ EVT:${evt} bucket deleted (${d.deleted||0})`,'crun');
+    await refreshScriptStatus();
+  }catch(_){
+    addLog('srv',`✘ delete EVT:${evt} failed`,'cerr');
+  }
+}
+async function queueNowEvtBucket(evt){
+  try{
+    const r=await fetch('/script/pool/'+encodeURIComponent(evt)+'/queue_now',{method:'POST'});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){addLog('srv',`✘ queue-now EVT:${evt} failed`,'cerr');return;}
+    addLog('srv',`→ EVT:${evt} queued now (${d.released||0})`,'csnd');
+    await refreshScriptStatus();
+  }catch(_){
+    addLog('srv',`✘ queue-now EVT:${evt} failed`,'cerr');
+  }
+}
+function renderEvtPool(){
+  const body=document.getElementById('evt-pool-body');
+  const total=evtPoolState.total||0;
+  document.getElementById('evt-pool-total').textContent=String(total);
+  if(!evtPoolState.buckets||!evtPoolState.buckets.length){
+    body.innerHTML='<div class="evt-head"><span>pending</span><span>0</span></div>';
+    return;
+  }
+  body.innerHTML=evtPoolState.buckets.map(b=>{
+    const first=(b.scripts&&b.scripts[0])?b.scripts[0]:null;
+    const meta=first?`#${first.id} ${first.summary} (${first.age_s}s)`:'';
+    const evtEnc=encodeURIComponent(b.evt);
+    return `<div class="evt-bucket"><div class="evt-row"><span>EVT:${esc(b.evt)}</span><span>${b.count}</span></div><div class="evt-meta">${esc(meta)}</div><div class="evt-acts"><button class="btn-g btn-sm" data-evt="${evtEnc}" onclick="queueNowEvtBucket(decodeURIComponent(this.dataset.evt))">QUEUE NOW</button><button class="btn-b btn-sm" data-evt="${evtEnc}" onclick="loadEvtBucket(decodeURIComponent(this.dataset.evt))">LOAD</button><button class="btn-r btn-sm" data-evt="${evtEnc}" onclick="deleteEvtBucket(decodeURIComponent(this.dataset.evt))">DELETE</button></div></div>`;
+  }).join('');
+}
+function setEvtPoolData(msg){
+  evtPoolState={
+    total:msg.total||0,
+    buckets:Array.isArray(msg.buckets)?msg.buckets:[]
+  };
+  renderEvtPool();
+}
+async function refreshScriptStatus(){
+  try{
+    const d=await fetch('/script/status').then(r=>r.json());
+    if(d&&d.pending)setEvtPoolData(d.pending);
+  }catch(_){ }
+}
+function classifyKbm(line){
+  if(line.startsWith('EVT:')) return 'cevt';
+  if(line.startsWith('OK')) return 'cok';
+  if(line.startsWith('ERR')) return 'cerr';
+  return 'cdim';
+}
 
 // ── WebSocket ────────────────────────────────────────────────
 function srvWSConnect(){
   srvWS=new WebSocket(`ws://${location.host}/ws/srv`);
   srvWS.onopen=()=>addLog('srv','WS connected','cdim');
   srvWS.onmessage=e=>{try{const msg=JSON.parse(e.data);
-    if(msg.type==='serial') addLog('srv','← '+msg.line,classifySrv(msg.line));
+    if(msg.type==='serial'){
+      const line=String(msg.line||'');
+      addLog('srv',(line.startsWith('→ ')?'':'← ')+line,classifySrv(line));
+    }
     else if(msg.type==='status') applySrvStatus(msg);
     else if(msg.type==='attached'){attachedMap=intKeys(msg.attached||{});renderServoList();}
     else if(msg.type==='done'){applySrvStatus({state:'idle'});setProgress(null,null);setProgMsg('✔ done');document.getElementById('prog-badge').style.display='none';}
     else if(msg.type==='error') addLog('srv','ERR '+msg.message,'cerr');
+    else if(msg.type==='script_pool') setEvtPoolData(msg);
   }catch(_){}};
   srvWS.onclose=()=>{addLog('srv','WS disconnected, retry 3s...','cerr');setTimeout(srvWSConnect,3000);};
 }
@@ -927,9 +1052,18 @@ function kbmWSConnect(){
   kbmWS.onopen=()=>addLog('kbm','WS connected','cdim');
   kbmWS.onmessage=e=>{try{const msg=JSON.parse(e.data);
     if(msg.type==='serial'){
-      addLog('kbm','← '+msg.line,msg.line.startsWith('OK')?'cok':'cdim');
+      const line=String(msg.line||'');
+      addLog('kbm',(line.startsWith('→ ')?'':'← ')+line,classifyKbm(line));
+    } else if(msg.type==='event'){
+      addLog('kbm','⚑ EVT '+msg.evt,'cevt');
     } else if(msg.type==='status'){
       kbmState=msg.state||'disc';updateKbmLed();
+    } else if(msg.type==='script_wait'){
+      setProgMsg(`⌛ waiting EVT:${msg.evt}`);
+      addLog('kbm',`⌛ waiting EVT:${msg.evt}`,'crun');
+    } else if(msg.type==='script_event'){
+      addLog('kbm',`✓ EVT matched ${msg.evt}`,'cevt');
+      setProgMsg(`✓ EVT ${msg.evt}`);
     } else if(msg.type==='script_start'){
       addLog('kbm',`▶ Script started  ${msg.total} steps  loop=${msg.loop}`,'csnd');
       setProgress(0,msg.total);
@@ -959,6 +1093,11 @@ function kbmWSConnect(){
       document.getElementById('kb-lock-msg').style.display='none';
     } else if(msg.type==='script_error'){
       addLog('kbm','✘ '+msg.message,'cerr');
+    } else if(msg.type==='script_pool'){
+      setEvtPoolData(msg);
+    } else if(msg.type==='script_pool_released'){
+      const src=msg.source==='manual'?'QUEUE NOW':'EVT';
+      addLog('srv',`✓ ${src} ${msg.evt} released ${msg.released} script(s)`,'cok');
     }
   }catch(_){}};
   kbmWS.onclose=()=>{addLog('kbm','WS disconnected, retry 3s...','cerr');setTimeout(kbmWSConnect,3000);};
@@ -1037,6 +1176,8 @@ refreshPorts();
 srvWSConnect();
 kbmWSConnect();
 setInterval(refreshPorts,8000);
+refreshScriptStatus();
+setInterval(refreshScriptStatus,4000);
 addLog('srv','RKS v4 ready','cdim');
 addLog('kbm','RKS v4 ready','cdim');
 </script>

@@ -22,6 +22,7 @@ class SerialManager:
         self._serial:        Optional[serial.Serial]        = None
         self._lock           = threading.Lock()
         self._on_line:       Optional[Callable[[str], None]] = None
+        self._on_send:       Optional[Callable[[str], None]] = None
         self._on_disconnect: Optional[Callable[[], None]]    = None
         self._thread:        Optional[threading.Thread]      = None
         self._running        = False
@@ -31,6 +32,9 @@ class SerialManager:
     # ── callbacks ─────────────────────────────────────────────
     def on_line(self, cb: Callable[[str], None]):
         self._on_line = cb
+
+    def on_send(self, cb: Callable[[str], None]):
+        self._on_send = cb
 
     def on_disconnect(self, cb: Callable[[], None]):
         self._on_disconnect = cb
@@ -98,9 +102,12 @@ class SerialManager:
         if not self.is_connected:
             return False
         try:
-            self._serial.write(f"{cmd.strip()}\n".encode())
+            outbound = cmd.strip()
+            self._serial.write(f"{outbound}\n".encode())
             self._serial.flush()
-            logger.debug(f"SRV >> {cmd}")
+            logger.debug(f"SRV >> {outbound}")
+            if self._on_send:
+                self._on_send(outbound)
             return True
         except serial.SerialException as e:
             logger.error(f"SRV send error: {e}")
