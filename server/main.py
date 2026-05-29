@@ -20,6 +20,8 @@ from collections import deque
 from typing import Optional, Any
 
 import cv2
+import serial
+import serial.tools.list_ports
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -40,6 +42,7 @@ CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "75"))
 HOST         = os.getenv("HOST", "0.0.0.0")
 PORT         = int(os.getenv("PORT", "8000"))
+AUTO_CONNECT_SERIAL = os.getenv("AUTO_CONNECT_SERIAL", "1").strip().lower() in ("1", "true", "yes", "on")
 
 # ── 全域物件 ─────────────────────────────────────────────────
 kb_serial = KeyboardSerial()
@@ -336,6 +339,120 @@ async def _emit_event_and_release(evt: str):
     await event_bus.emit(evt)
     await _release_pending_for_event(evt, source="event")
 
+
+def _probe_serial_port(port: str, baud: int, probe_cmd: str, ok_prefixes: tuple[str, ...]) -> bool:
+    """Open a serial port temporarily and check whether probe command gets expected ACK."""
+    ser = None
+    try:
+        ser = serial.Serial(port, baudrate=baud, timeout=0.3)
+        # Most Arduino boards reset on serial open.
+        time.sleep(1.8)
+        ser.reset_input_buffer()
+        ser.write(f"{probe_cmd}\n".encode("utf-8"))
+        ser.flush()
+        deadline = time.monotonic() + 1.8
+        while time.monotonic() < deadline:
+            raw = ser.readline()
+            if not raw:
+                continue
+            line = raw.decode("utf-8", errors="replace").strip().upper()
+            if any(line.startswith(prefix) for prefix in ok_prefixes):
+                return True
+    except Exception:
+        return False
+    finally:
+        try:
+            if ser and ser.is_open:
+                ser.close()
+        except Exception:
+            pass
+    return False
+
+
+async def _auto_connect_serial_devices():
+    if not AUTO_CONNECT_SERIAL:
+        logger.info("AUTO_CONNECT_SERIAL disabled")
+        return
+    ports = [p.device for p in serial.tools.list_ports.comports()]
+    if not ports:
+        logger.info("Auto connect: no serial ports found")
+        return
+
+    loop = asyncio.get_running_loop()
+    srv_port = None
+    kbm_port = None
+
+    # Probe SRV first (115200, supports PING -> OK PONG / READY family).
+    for port in ports:
+        try:
+            ok = await asyncio.wait_for(
+                loop.run_in_executor(
+                    executor,
+                    lambda p=port: _probe_serial_port(p, 115200, "PING", ("OK PONG", "OK READY", "OK ")),
+                ),
+                timeout=4.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Auto probe SRV timeout: {port}")
+            ok = False
+        if ok:
+            srv_port = port
+            break
+
+    # Probe KBM on remaining ports (38400, PING should return OK/ERR).
+    for port in ports:
+        if port == srv_port:
+            continue
+        try:
+            ok = await asyncio.wait_for(
+                loop.run_in_executor(
+                    executor,
+                    lambda p=port: _probe_serial_port(p, 38400, "PING", ("OK", "ERR")),
+                ),
+                timeout=4.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Auto probe KBM timeout: {port}")
+            ok = False
+        if ok:
+            kbm_port = port
+            break
+
+    if srv_port and not srv_serial.is_connected:
+        try:
+            ok = await asyncio.wait_for(
+                loop.run_in_executor(executor, srv_serial.connect, srv_port),
+                timeout=4.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Auto connect SRV timeout: {srv_port}")
+            ok = False
+        if ok:
+            srv_serial.send("STATUS")
+            srv_ws.broadcast_sync({"type": "status", "state": "idle", "port": srv_port, "attached": srv_serial.attached})
+            logger.info(f"Auto connected SRV: {srv_port}")
+        else:
+            logger.warning(f"Auto connect SRV failed: {srv_port}")
+    else:
+        logger.info("Auto connect SRV: no matched port")
+
+    if kbm_port and not kb_serial.is_connected:
+        try:
+            ok = await asyncio.wait_for(
+                loop.run_in_executor(executor, kb_serial.connect, kbm_port),
+                timeout=4.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Auto connect KBM timeout: {kbm_port}")
+            ok = False
+        if ok:
+            kbm_ws.broadcast_sync({"type": "status", "state": "idle", "port": kbm_port})
+            logger.info(f"Auto connected KBM: {kbm_port}")
+        else:
+            logger.warning(f"Auto connect KBM failed: {kbm_port}")
+    else:
+        logger.info("Auto connect KBM: no matched port")
+
 # ── Lifespan ─────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -344,6 +461,8 @@ async def lifespan(app: FastAPI):
     srv_ws.set_loop(loop)
     kbm_ws.set_loop(loop)
     event_bus.set_loop(loop)
+    # Run serial auto-connect in background so startup is never blocked by COM probing.
+    asyncio.create_task(_auto_connect_serial_devices())
     logger.info(f"Opening camera index: {CAMERA_INDEX}")
     camera = cv2.VideoCapture(CAMERA_INDEX)
     yield
