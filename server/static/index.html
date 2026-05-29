@@ -948,6 +948,7 @@ function applySrvStatus(msg){
   const btn=document.getElementById('srv-conn-btn');
   btn.textContent=srvState==='disc'?'CONNECT':'DISCONNECT';
   btn.className=srvState==='disc'?'btn-g btn-sm':'btn-r btn-sm';
+  if(msg.port)syncPortSelect('srv-port-sel',msg.port);
   if(msg.attached){attachedMap=intKeys(msg.attached||{});renderServoList();}
   kbLocked=srvState==='running';
   document.getElementById('kb-lock-lbl').style.display=kbLocked?'':'none';
@@ -1058,6 +1059,7 @@ function kbmWSConnect(){
       addLog('kbm','⚑ EVT '+msg.evt,'cevt');
     } else if(msg.type==='status'){
       kbmState=msg.state||'disc';updateKbmLed();
+      if(msg.port)syncPortSelect('kbm-port-sel',msg.port);
     } else if(msg.type==='script_wait'){
       setProgMsg(`⌛ waiting EVT:${msg.evt}`);
       addLog('kbm',`⌛ waiting EVT:${msg.evt}`,'crun');
@@ -1166,6 +1168,19 @@ function fillPortSel(id,ports){
   sel.innerHTML='<option value="">— select port —</option>';
   ports.forEach(p=>{const o=document.createElement('option');o.value=p.port;o.text=(p.likely?'⭐ ':'   ')+p.port+'  '+p.desc;sel.appendChild(o);});
   if(cur)sel.value=cur;
+}
+
+function syncPortSelect(id,port){
+  if(!port)return;
+  const sel=document.getElementById(id);if(!sel)return;
+  const exists=Array.from(sel.options).some(o=>o.value===port);
+  if(!exists){
+    const o=document.createElement('option');
+    o.value=port;
+    o.text='⭐ '+port+'  (connected)';
+    sel.appendChild(o);
+  }
+  sel.value=port;
 }
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
