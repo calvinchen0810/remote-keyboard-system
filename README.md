@@ -104,6 +104,50 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 瀏覽器：`http://電腦2:8000`
 架構圖：`http://電腦2:8000/arch`
 
+### Windows EXE 最小部署
+
+打包後可直接使用：
+
+- `server/dist/rks-server.exe`
+- `server/dist/start-rks-server.bat`
+
+建議部署步驟：
+
+1. 把 `rks-server.exe` 與 `start-rks-server.bat` 複製到實際機器同一個資料夾。
+2. 雙擊 `start-rks-server.bat` 啟動。
+3. 在同網段其他設備開啟 `http://<控制端IP>:8000`。
+
+可選環境變數（在啟動前設定）：
+
+- `HOST`（預設 `0.0.0.0`）
+- `PORT`（預設 `8000`）
+- `AUTO_CONNECT_SERIAL`（預設 `1`）
+- `CAMERA_INDEX`（預設 `0`）
+- `JPEG_QUALITY`（預設 `75`）
+
+#### 防火牆注意事項（Windows）
+
+第一次啟動若跳出防火牆提示，請允許 `rks-server.exe` 使用「私人網路」。
+
+若要手動加入規則（系統管理員 PowerShell）：
+
+```powershell
+New-NetFirewallRule -DisplayName "RKS Server 8000" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8000
+```
+
+#### Camera 注意事項
+
+- `rks-server.exe` 需獨占攝影機，請關閉其他占用相機的程式（Teams/Zoom/Camera App）。
+- Windows 隱私權設定需允許桌面應用程式使用相機。
+- 若畫面黑屏或錯誤，可改 `CAMERA_INDEX`（例如 `1`、`2`）後重啟。
+
+#### COM（SRV/KBM）注意事項
+
+- 預設 `AUTO_CONNECT_SERIAL=1`，啟動後會自動掃描並嘗試連接 SRV/KBM。
+- 若連到錯誤裝置，請在 UI 手動切換正確 COM port。
+- 請避免 Arduino IDE Serial Monitor 或其他工具同時占用同一個 COM port。
+- 建議在裝置管理員固定 COM 編號，降低重插後編號漂移造成的連線失敗。
+
 ---
 
 ## API 端點
@@ -250,7 +294,7 @@ curl http://127.0.0.1:8000/script/status
 | `COMBO:<m>+<k>` | 組合鍵，例 `COMBO:CTRL+C` |
 | `RELEASEALL` | 釋放所有按鍵 |
 | `MOUSE:MOVE dx dy` | 相對移動 −127~127 |
-| `MOUSE:CLICK L/R/M` | 單擊 |
+| `MOUSE:CLICK L/R/M` | 單擊 |啽
 | `MOUSE:DBLCLICK L` | 雙擊 |
 | `MOUSE:DOWN/UP L` | 按住/放開 |
 | `MOUSE:SCROLL n` | 滾輪，正=上 負=下 |

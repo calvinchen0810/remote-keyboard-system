@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -476,7 +477,8 @@ async def lifespan(app: FastAPI):
 # ── App ───────────────────────────────────────────────────────
 app = FastAPI(title="RKS — Remote Keyboard System", lifespan=lifespan)
 app.include_router(srv_router, prefix="/srv")
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -1036,4 +1038,4 @@ def video_stream():
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host=HOST, port=PORT, reload=False, log_level="info")
+    uvicorn.run(app, host=HOST, port=PORT, reload=False, log_level="info")
