@@ -12,6 +12,7 @@
   --grn:#22c55e;--grn2:#16a34a;--amb:#f59e0b;--red:#ef4444;--blu:#38bdf8;--pur:#a78bfa;
   --fg:#e2e8f0;--fg2:#94a3b8;--fg3:#475569;
   --mono:'Consolas','Courier New',monospace;--r:4px;
+  --tel:#2dd4bf;
 }
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,sans-serif;font-size:12px}
 ::-webkit-scrollbar{width:4px;height:4px}
@@ -32,6 +33,8 @@ button:disabled{opacity:.3;cursor:not-allowed}
 .btn-b:hover:not(:disabled){background:rgba(56,189,248,.15)}
 .btn-p{background:rgba(167,139,250,.1);border-color:#4c1d95;color:var(--pur)}
 .btn-p:hover:not(:disabled){background:rgba(167,139,250,.2)}
+.btn-t{background:rgba(45,212,191,.08);border-color:#115e59;color:var(--tel)}
+.btn-t:hover:not(:disabled){background:rgba(45,212,191,.18)}
 .btn-sm{padding:2px 7px;font-size:10px}
 input,select,textarea{font-family:var(--mono);font-size:11px;background:var(--inp);color:var(--fg);
   border:1px solid var(--bd);border-radius:var(--r);padding:2px 5px;outline:none;transition:border-color .1s}
@@ -65,13 +68,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 #body{display:flex;flex:1;overflow:hidden;min-height:0;padding:6px;gap:6px}
 
 /* columns */
-#left-col{width:190px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}
-#mid-col{flex:1 1 0;display:flex;flex-direction:column;gap:6px;overflow:hidden;min-width:300px}
+#left-col{width:190px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow-y:auto}
+#mid-col{flex:3 1 0;display:flex;flex-direction:column;gap:6px;overflow:hidden;min-width:300px}
 #drag-handle{width:5px;flex-shrink:0;cursor:col-resize;background:transparent;border-radius:2px;position:relative;z-index:10;transition:background .15s}
 #drag-handle:hover,#drag-handle.dragging{background:var(--grn2)}
 #drag-handle::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:1px;height:40px;background:var(--br);border-radius:1px}
-#script-col{flex:1 1 0;display:flex;flex-direction:column;overflow:hidden;min-width:300px}
+#script-col{flex:2 1 0;display:flex;flex-direction:column;overflow:hidden;min-width:240px}
 #right-col{width:220px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}
+#visual-col{width:178px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow-y:auto;overflow-x:hidden}
 
 /* left */
 .srv-list{overflow:hidden}
@@ -129,6 +133,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .b-kbd{background:rgba(167,139,250,.12);color:#8b5cf6;border:1px solid rgba(167,139,250,.3)}
 .b-mse{background:rgba(239,68,68,.1);color:#f87171;border:1px solid rgba(239,68,68,.25)}
 .b-evt{background:rgba(56,189,248,.1);color:#38bdf8;border:1px solid rgba(56,189,248,.28)}
+.b-img{background:rgba(45,212,191,.1);color:#2dd4bf;border:1px solid rgba(45,212,191,.3)}
 .ti{font-family:var(--mono);font-size:11px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:2px 4px;text-align:center;min-height:22px}
 .ti:hover{border-color:var(--grn2)}
 .ti-s{font-family:var(--mono);font-size:11px;background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:2px 3px;min-height:22px}
@@ -218,6 +223,40 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .pop-row{display:flex;align-items:center;gap:7px}
 .pop-row input[type=range]{flex:1}
 .pop-num{width:72px;text-align:center;padding:3px 5px;font-size:11px}
+/* snap pool + conditions */
+#snap-list{overflow-y:auto}
+#cond-list{overflow-y:auto;flex:1}
+.snap-item{display:flex;align-items:center;gap:4px;padding:3px 6px;border-bottom:1px solid var(--bd)}
+.snap-item:last-child{border-bottom:none}
+.snap-thumb{width:44px;height:30px;object-fit:cover;border-radius:2px;border:1px solid var(--bd);flex-shrink:0;cursor:pointer}
+.snap-id{font-family:var(--mono);font-size:9px;color:var(--fg3);flex:1;overflow:hidden;text-overflow:ellipsis}
+.cond-item{padding:4px 7px;border-bottom:1px solid var(--bd)}
+.cond-item:last-child{border-bottom:none}
+.cond-row1{display:flex;align-items:center;gap:4px}
+.cond-name{font-family:var(--mono);font-size:10px;color:var(--tel);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cond-score{font-family:var(--mono);font-size:9px;color:var(--fg3);white-space:nowrap}
+.cond-acts{display:flex;gap:3px;margin-top:3px;flex-wrap:wrap}
+.cond-acts .btn-sm{padding:1px 4px}
+/* condition creation modal */
+#vcModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:center;justify-content:center}
+#vcModal.open{display:flex}
+#vcModal-box{background:var(--panel);border:1px solid var(--br);border-radius:6px;width:min(520px,92vw);display:flex;flex-direction:column;overflow:hidden;max-height:90vh}
+.vcm-hdr{background:var(--card);padding:8px 12px;border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--fg2);display:flex;align-items:center;gap:8px;flex-shrink:0}
+.vcm-body{padding:10px 12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1}
+.vcm-snap-wrap{position:relative;width:100%;background:#000;border-radius:4px;overflow:hidden;flex-shrink:0}
+.vcm-snap-wrap img{display:block;width:100%;max-height:220px;object-fit:contain;user-select:none;-webkit-user-drag:none}
+#vcm-roi-canvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+#vcm-draw-canvas{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair}
+.vcm-row{display:flex;align-items:center;gap:8px}
+.vcm-lbl{font-family:var(--mono);font-size:10px;color:var(--fg2);width:100px;flex-shrink:0}
+.vcm-ftr{padding:8px 12px;border-top:1px solid var(--bd);display:flex;gap:6px;justify-content:flex-end;flex-shrink:0;background:var(--card)}
+.vcm-hint{font-family:var(--mono);font-size:9px;color:var(--fg3);padding:3px 0}
+/* IMG step picker */
+#img-picker{position:fixed;background:var(--card);border:1px solid var(--br);border-radius:var(--r);padding:4px;box-shadow:0 8px 20px rgba(0,0,0,.5);z-index:9999;display:none;flex-direction:column;gap:2px;min-width:210px;max-height:180px;overflow-y:auto}
+#img-picker.show{display:flex}
+.img-pick-item{font-family:var(--mono);font-size:10px;padding:5px 8px;border-radius:2px;cursor:pointer;color:var(--tel)}
+.img-pick-item:hover{background:var(--hov)}
+.img-pick-empty{font-family:var(--mono);font-size:10px;color:var(--fg3);padding:6px 8px;font-style:italic}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 </style>
 </head>
@@ -230,6 +269,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <div class="tbsep"></div>
   <div class="led led-dim" id="cam-led"></div>
   <span style="font-family:var(--mono);font-size:10px;color:var(--fg2)">CAM</span>
+  <button class="btn-sm" id="cam-toggle-btn" onclick="camToggle()">OFF</button>
   <div class="tbsep"></div>
   <div class="tb-grp">
     <span class="tb-grp-lbl" style="color:var(--amb)">SRV</span>
@@ -310,7 +350,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
       <div class="cam-grid"></div>
       <span id="cam-tag">LIVE ●</span>
       <div id="cam-live"></div>
-      <img id="cam-img" src="/stream" onerror="camError()" onload="camLoaded()">
+      <img id="cam-img" src="" style="display:none" onerror="camError()" onload="camLoaded()">
       <div id="cam-offline"><span style="font-size:1.8rem;opacity:.2">⬛</span><span>CAMERA OFFLINE</span></div>
     </div>
   </div>
@@ -336,6 +376,25 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 <!-- DRAG HANDLE -->
 <div id="drag-handle"></div>
 
+<!-- VISUAL COL -->
+<div id="visual-col">
+
+  <div class="pn" id="snap-pn" style="flex-shrink:0">
+    <div class="ph">Snap Pool
+      <button class="btn-t btn-sm" style="margin-left:auto" onclick="takeSnapshot()">📸 SNAP</button>
+    </div>
+    <div id="snap-list"><div style="font-family:var(--mono);font-size:9px;color:var(--fg3);padding:6px 8px">No snapshots</div></div>
+  </div>
+
+  <div class="pn" id="cond-pn" style="flex:1;min-height:0">
+    <div class="ph">Conditions
+      <span id="cond-count" style="font-size:9px;color:var(--fg3);margin-left:4px">0</span>
+    </div>
+    <div id="cond-list" style="flex:1;overflow-y:auto"><div style="font-family:var(--mono);font-size:9px;color:var(--fg3);padding:6px 8px">No conditions</div></div>
+  </div>
+
+</div>
+
 <!-- SCRIPT COL -->
 <div id="script-col" class="pn">
   <div class="ph">Script Editor
@@ -346,6 +405,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     <button class="btn-p btn-sm" onclick="addKbdStep()">＋ KBD</button>
     <button class="btn-r btn-sm" onclick="addMseStep()">＋ MSE</button>
     <button class="btn-b btn-sm" onclick="addEvtStep()">＋ EVT</button>
+    <button class="btn-t btn-sm" id="add-img-btn" onclick="toggleImgPicker(event)">＋ IMG</button>
     <div style="width:1px;height:12px;background:var(--bd);margin:0 2px"></div>
     <div style="display:flex;align-items:center;gap:3px;font-family:var(--mono);font-size:9px;color:var(--fg3)">
       ms:<input type="number" id="default-delay" value="1000" min="0" max="30000" step="500"
@@ -357,7 +417,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     </label>
     <button class="btn-sm" onclick="importJSON()">Import</button>
     <button class="btn-sm" onclick="exportJSON()">Export</button>
-    <button class="btn-r btn-sm" onclick="clearAllSteps()">Clear All</button>
+    <button class="btn-b btn-sm" onclick="clearAllSteps()">Clear</button>
     <button class="btn-g btn-sm" id="run-btn" onclick="runScript()">▶ RUN</button>
     <button class="btn-r btn-sm" onclick="stopScript()">■ STOP</button>
   </div>
@@ -761,6 +821,7 @@ function renderSteps(){
     const badge=s.type==='srv'?'<span class="badge b-srv">SRV</span>':
           s.type==='kbd'?'<span class="badge b-kbd">KBD</span>':
           s.type==='mse'?'<span class="badge b-mse">MSE</span>':
+          (s.type==='evt'&&(s.evt||'').startsWith('IMG.MATCH.'))?'<span class="badge b-img">IMG</span>':
                    '<span class="badge b-evt">EVT</span>';
     tr.innerHTML=`<td class="drag-col">⠿</td><td>${badge}</td>
       <td><input class="ti pop-inp" value="${s.delay_ms}" style="width:38px"
@@ -1100,6 +1161,9 @@ function kbmWSConnect(){
     } else if(msg.type==='script_pool_released'){
       const src=msg.source==='manual'?'QUEUE NOW':'EVT';
       addLog('srv',`✓ ${src} ${msg.evt} released ${msg.released} script(s)`,'cok');
+    } else if(msg.type==='visual_fire'){
+      addLog('srv',`📷 IMG MATCH: ${msg.condition_id}  score=${msg.score.toFixed(3)}`,'cok');
+      refreshCondList();
     }
   }catch(_){}};
   kbmWS.onclose=()=>{addLog('kbm','WS disconnected, retry 3s...','cerr');setTimeout(kbmWSConnect,3000);};
@@ -1140,6 +1204,35 @@ function manualSend(){
 }
 
 // ── Webcam ───────────────────────────────────────────────────
+let camEnabled = false;
+
+function camToggle(){
+  if(camEnabled) camStop(); else camStart();
+}
+async function camStart(){
+  try{
+    const r = await fetch('/camera/start', {method:'POST'});
+    if(!r.ok){ addLog('srv','Camera start failed: '+r.status,'cerr'); return; }
+    camEnabled = true;
+    const btn = document.getElementById('cam-toggle-btn');
+    btn.textContent = 'ON';
+    btn.className = 'btn-g btn-sm';
+    document.getElementById('cam-img').src = '/stream?t='+Date.now();
+  }catch(e){ addLog('srv','Camera error: '+e,'cerr'); }
+}
+async function camStop(){
+  try{ await fetch('/camera/stop', {method:'POST'}); }catch(_){}
+  camEnabled = false;
+  const btn = document.getElementById('cam-toggle-btn');
+  btn.textContent = 'OFF';
+  btn.className = 'btn-sm';
+  const img = document.getElementById('cam-img');
+  img.src = '';
+  img.style.display = 'none';
+  document.getElementById('cam-offline').style.display = 'flex';
+  document.getElementById('cam-live').style.display = 'none';
+  document.getElementById('cam-led').className = 'led led-dim';
+}
 function camLoaded(){
   document.getElementById('cam-img').style.display='block';
   document.getElementById('cam-offline').style.display='none';
@@ -1151,7 +1244,12 @@ function camError(){
   document.getElementById('cam-offline').style.display='flex';
   document.getElementById('cam-live').style.display='none';
   document.getElementById('cam-led').className='led led-dim';
-  setTimeout(()=>{document.getElementById('cam-img').src='/stream?t='+Date.now();},5000);
+  if(camEnabled){
+    setTimeout(()=>{
+      const img=document.getElementById('cam-img');
+      if(camEnabled) img.src='/stream?t='+Date.now();
+    },5000);
+  }
 }
 
 // ── Port refresh ─────────────────────────────────────────────
@@ -1185,6 +1283,257 @@ function syncPortSelect(id,port){
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// ── Visual Trigger ────────────────────────────────────────────
+let snapshots=[], conditions=[], vcmSnapId=null, vcmRoi=null;
+let roiDraw={active:false,sx:0,sy:0,ex:0,ey:0};
+
+/* Snapshot pool */
+async function takeSnapshot(){
+  try{
+    const r=await fetch('/visual/snapshot',{method:'POST'});
+    if(!r.ok){addLog('srv','SNAP failed: '+r.status,'cerr');return;}
+    const d=await r.json();
+    addLog('srv',`📸 Snapshot ${d.snapshot.id} saved (${d.snapshot.width}×${d.snapshot.height})`,'cok');
+    await refreshSnapList();
+  }catch(e){addLog('srv','SNAP error: '+e,'cerr');}
+}
+async function refreshSnapList(){
+  try{
+    const r=await fetch('/visual/snapshots');
+    if(!r.ok)return;
+    const d=await r.json();
+    snapshots=d.snapshots||[];
+    renderSnapList();
+    renderImgPicker();
+  }catch(_){}
+}
+function renderSnapList(){
+  const el=document.getElementById('snap-list');
+  if(!snapshots.length){el.innerHTML='<div style="font-family:var(--mono);font-size:9px;color:var(--fg3);padding:6px 8px">No snapshots</div>';return;}
+  el.innerHTML=snapshots.map(s=>`
+    <div class="snap-item">
+      <img class="snap-thumb" src="data:image/jpeg;base64,${s.thumb_b64}" alt="${s.id}" title="${s.id}">
+      <span class="snap-id">${s.id}</span>
+      <button class="btn-t btn-sm" onclick="openCondModal('${s.id}')" title="Create condition from this snapshot">＋ Cond</button>
+      <button class="del-btn" onclick="deleteSnapshot('${s.id}')" title="Delete snapshot">✕</button>
+    </div>`).join('');
+}
+async function deleteSnapshot(id){
+  await fetch('/visual/snapshots/'+id,{method:'DELETE'});
+  await refreshSnapList();
+}
+
+/* Condition modal + ROI drawing */
+function openCondModal(snapId){
+  vcmSnapId=snapId;
+  vcmRoi=null;
+  const snap=snapshots.find(s=>s.id===snapId);
+  if(!snap)return;
+  const img=document.getElementById('vcm-snap-img');
+  img.src='data:image/jpeg;base64,'+snap.thumb_b64;
+  img.onload=()=>syncDrawCanvas();
+  document.getElementById('vcm-name').value='';
+  document.getElementById('vcm-thr').value=92;
+  document.getElementById('vcm-thr-val').textContent='0.92';
+  document.getElementById('vcm-hits').value=3;
+  document.getElementById('vcm-cool').value=3000;
+  document.getElementById('vcm-roi-hint').style.display='';
+  clearRoi();
+  document.getElementById('vcModal').classList.add('open');
+}
+function closeCondModal(){
+  document.getElementById('vcModal').classList.remove('open');
+  vcmSnapId=null;
+  vcmRoi=null;
+}
+function syncDrawCanvas(){
+  const wrap=document.getElementById('vcm-snap-wrap');
+  const img=document.getElementById('vcm-snap-img');
+  const dc=document.getElementById('vcm-draw-canvas');
+  const rc=document.getElementById('vcm-roi-canvas');
+  dc.width=img.naturalWidth||img.offsetWidth||640;
+  dc.height=img.naturalHeight||img.offsetHeight||480;
+  rc.width=dc.width;rc.height=dc.height;
+}
+function clearRoi(){
+  const rc=document.getElementById('vcm-roi-canvas');
+  const ctx=rc.getContext('2d');
+  ctx.clearRect(0,0,rc.width,rc.height);
+}
+function roiMouseDown(e){
+  const dc=document.getElementById('vcm-draw-canvas');
+  const rect=dc.getBoundingClientRect();
+  roiDraw.active=true;
+  roiDraw.sx=(e.clientX-rect.left)/rect.width;
+  roiDraw.sy=(e.clientY-rect.top)/rect.height;
+  roiDraw.ex=roiDraw.sx;roiDraw.ey=roiDraw.sy;
+}
+function roiMouseMove(e){
+  if(!roiDraw.active)return;
+  const dc=document.getElementById('vcm-draw-canvas');
+  const rect=dc.getBoundingClientRect();
+  roiDraw.ex=(e.clientX-rect.left)/rect.width;
+  roiDraw.ey=(e.clientY-rect.top)/rect.height;
+  drawRoiOverlay();
+}
+function roiMouseUp(e){
+  if(!roiDraw.active)return;
+  roiDraw.active=false;
+  const rx=Math.min(roiDraw.sx,roiDraw.ex);
+  const ry=Math.min(roiDraw.sy,roiDraw.ey);
+  const rw=Math.abs(roiDraw.ex-roiDraw.sx);
+  const rh=Math.abs(roiDraw.ey-roiDraw.sy);
+  if(rw>0.01&&rh>0.01){
+    vcmRoi=[rx,ry,rw,rh];
+    document.getElementById('vcm-roi-hint').style.display='none';
+  }
+  drawRoiOverlay();
+}
+function drawRoiOverlay(){
+  const rc=document.getElementById('vcm-roi-canvas');
+  const ctx=rc.getContext('2d');
+  ctx.clearRect(0,0,rc.width,rc.height);
+  const rx=Math.min(roiDraw.sx,roiDraw.ex);
+  const ry=Math.min(roiDraw.sy,roiDraw.ey);
+  const rw=Math.abs(roiDraw.ex-roiDraw.sx);
+  const rh=Math.abs(roiDraw.ey-roiDraw.sy);
+  const W=rc.width,H=rc.height;
+  ctx.strokeStyle='#2dd4bf';ctx.lineWidth=2;ctx.setLineDash([4,3]);
+  ctx.strokeRect(rx*W,ry*H,rw*W,rh*H);
+  ctx.fillStyle='rgba(45,212,191,0.08)';
+  ctx.fillRect(rx*W,ry*H,rw*W,rh*H);
+}
+async function createCondition(){
+  if(!vcmSnapId){return;}
+  if(!vcmRoi){alert('Please draw an ROI on the image first.');return;}
+  const name=document.getElementById('vcm-name').value.trim();
+  if(!name){alert('Please enter a condition name.');return;}
+  const threshold=parseFloat((document.getElementById('vcm-thr').value/100).toFixed(2));
+  const min_hits=parseInt(document.getElementById('vcm-hits').value)||3;
+  const cooldown_ms=parseInt(document.getElementById('vcm-cool').value)||3000;
+  try{
+    const r=await fetch('/visual/conditions',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name,snapshot_id:vcmSnapId,roi:vcmRoi,threshold,min_hits,cooldown_ms})});
+    const d=await r.json();
+    if(!r.ok){alert('Error: '+(d.detail||r.status));return;}
+    addLog('srv',`✓ Condition "${name}" created  EVT: ${d.evt}`,'cok');
+    closeCondModal();
+    await refreshCondList();
+  }catch(e){alert('Error: '+e);}
+}
+
+/* Condition list */
+async function refreshCondList(){
+  try{
+    const r=await fetch('/visual/conditions');
+    if(!r.ok)return;
+    const d=await r.json();
+    conditions=d.conditions||[];
+    renderCondList();
+    renderImgPicker();
+  }catch(_){}
+}
+function renderCondList(){
+  const el=document.getElementById('cond-list');
+  const cnt=document.getElementById('cond-count');
+  cnt.textContent=conditions.length;
+  if(!conditions.length){el.innerHTML='<div style="font-family:var(--mono);font-size:9px;color:var(--fg3);padding:6px 8px">No conditions</div>';return;}
+  el.innerHTML=conditions.map(c=>{
+    const armed=c.enabled;
+    const cool=c.in_cooldown?' ❄':'';
+    const scoreColor=c.last_score>=c.threshold?'var(--grn)':c.last_score>c.threshold*0.85?'var(--amb)':'var(--fg3)';
+    const cidEnc=encodeURIComponent(c.condition_id);
+    return `<div class="cond-item">
+      <div class="cond-row1">
+        <span class="cond-name" title="${esc(c.condition_id)}">${esc(c.name)}</span>
+        <span class="cond-score" style="color:${scoreColor}">${(c.last_score).toFixed(2)}${cool}</span>
+        <span style="font-family:var(--mono);font-size:9px;color:${armed?'var(--grn)':'var(--fg3)'}">${armed?'●ARM':'○DIS'}</span>
+      </div>
+      <div class="cond-acts">
+        ${armed
+          ?`<button class="btn-sm btn-sm" onclick="disarmCond('${cidEnc}')">DISARM</button>`
+          :`<button class="btn-g btn-sm" onclick="armCond('${cidEnc}')">ARM</button>`}
+        <button class="btn-b btn-sm" onclick="testCond('${cidEnc}')">TEST</button>
+        <button class="btn-t btn-sm" onclick="addImgStepDirect('${cidEnc}','${esc(c.name)}')">+SCRIPT</button>
+        <button class="del-btn" onclick="deleteCond('${cidEnc}')" title="Delete">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+async function armCond(cidEnc){
+  const cid=decodeURIComponent(cidEnc);
+  await fetch('/visual/conditions/'+encodeURIComponent(cid)+'/arm',{method:'POST'});
+  await refreshCondList();
+}
+async function disarmCond(cidEnc){
+  const cid=decodeURIComponent(cidEnc);
+  await fetch('/visual/conditions/'+encodeURIComponent(cid)+'/disarm',{method:'POST'});
+  await refreshCondList();
+}
+async function testCond(cidEnc){
+  const cid=decodeURIComponent(cidEnc);
+  try{
+    const r=await fetch('/visual/conditions/'+encodeURIComponent(cid)+'/test',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok){addLog('srv','TEST failed: '+(d.detail||r.status),'cerr');return;}
+    const matched=d.matched?'✓ MATCH':'✗ NO MATCH';
+    addLog('srv',`TEST ${cid}: score=${d.score.toFixed(3)}  thr=${d.threshold}  ${matched}`,d.matched?'cok':'cdim');
+  }catch(e){addLog('srv','TEST error: '+e,'cerr');}
+}
+async function deleteCond(cidEnc){
+  const cid=decodeURIComponent(cidEnc);
+  await fetch('/visual/conditions/'+encodeURIComponent(cid),{method:'DELETE'});
+  await refreshCondList();
+}
+
+/* IMG step picker */
+function renderImgPicker(){
+  const picker=document.getElementById('img-picker');
+  const empty=document.getElementById('img-pick-empty');
+  // remove old items, keep empty div
+  [...picker.querySelectorAll('.img-pick-item')].forEach(n=>n.remove());
+  if(!conditions.length){empty.style.display='';return;}
+  empty.style.display='none';
+  conditions.forEach(c=>{
+    const div=document.createElement('div');
+    div.className='img-pick-item';
+    div.textContent='📷 '+c.name;
+    div.title='EVT: IMG.MATCH.'+c.condition_id;
+    div.onclick=()=>{addImgStepById(c.condition_id,c.name);toggleImgPickerOff();};
+    picker.appendChild(div);
+  });
+}
+function toggleImgPicker(e){
+  const picker=document.getElementById('img-picker');
+  if(picker.classList.contains('show')){toggleImgPickerOff();return;}
+  const btn=document.getElementById('add-img-btn');
+  const rect=btn.getBoundingClientRect();
+  picker.style.left=rect.left+'px';
+  picker.style.top=(rect.bottom+4)+'px';
+  renderImgPicker();
+  picker.classList.add('show');
+  setTimeout(()=>document.addEventListener('click',pickerClickaway,{once:true}),10);
+}
+function toggleImgPickerOff(){
+  document.getElementById('img-picker').classList.remove('show');
+}
+function pickerClickaway(e){
+  const picker=document.getElementById('img-picker');
+  if(!picker.contains(e.target))toggleImgPickerOff();
+}
+function addImgStepById(cid,name){
+  steps.unshift({type:'evt',_id:++stepIdCnt,delay_ms:0,evt:'IMG.MATCH.'+cid});
+  renderSteps();
+  addLog('srv',`Added IMG step: IMG.MATCH.${cid} (${name})`,'cdim');
+}
+function addImgStepDirect(cidEnc,name){
+  const cid=decodeURIComponent(cidEnc);
+  addImgStepById(cid,name);
+}
+
 // ── Init ─────────────────────────────────────────────────────
 switchLog('srv');
 refreshPorts();
@@ -1193,8 +1542,59 @@ kbmWSConnect();
 setInterval(refreshPorts,8000);
 refreshScriptStatus();
 setInterval(refreshScriptStatus,4000);
+refreshCondList();
+refreshSnapList();
 addLog('srv','RKS v4 ready','cdim');
 addLog('kbm','RKS v4 ready','cdim');
 </script>
+
+<!-- IMG step picker popover -->
+<div id="img-picker">
+  <div class="img-pick-empty" id="img-pick-empty">No conditions — create one first</div>
+</div>
+
+<!-- Condition creation modal -->
+<div id="vcModal">
+  <div id="vcModal-box">
+    <div class="vcm-hdr">
+      <span>// Create Visual Condition</span>
+      <button class="btn-sm" style="margin-left:auto" onclick="closeCondModal()">✕</button>
+    </div>
+    <div class="vcm-body">
+      <div class="vcm-hint">Drag on the image to select the ROI region to monitor.</div>
+      <div class="vcm-snap-wrap" id="vcm-snap-wrap">
+        <img id="vcm-snap-img" src="" alt="snapshot" draggable="false">
+        <canvas id="vcm-roi-canvas"></canvas>
+        <canvas id="vcm-draw-canvas"
+          onmousedown="roiMouseDown(event)"
+          onmousemove="roiMouseMove(event)"
+          onmouseup="roiMouseUp(event)"
+          onmouseleave="roiMouseUp(event)"></canvas>
+      </div>
+      <div class="vcm-row">
+        <span class="vcm-lbl">Name</span>
+        <input type="text" id="vcm-name" class="pop-inp" style="flex:1" placeholder="condition name">
+      </div>
+      <div class="vcm-row">
+        <span class="vcm-lbl">Threshold <span id="vcm-thr-val" style="color:var(--tel)">0.92</span></span>
+        <input type="range" id="vcm-thr" min="50" max="99" value="92" style="flex:1"
+          oninput="document.getElementById('vcm-thr-val').textContent=(this.value/100).toFixed(2)">
+      </div>
+      <div class="vcm-row">
+        <span class="vcm-lbl">Min Hits</span>
+        <input type="number" id="vcm-hits" class="pop-inp" value="3" min="1" max="30" style="width:60px">
+      </div>
+      <div class="vcm-row">
+        <span class="vcm-lbl">Cooldown ms</span>
+        <input type="number" id="vcm-cool" class="pop-inp" value="3000" min="100" max="60000" step="500" style="width:80px">
+      </div>
+      <div id="vcm-roi-hint" class="vcm-hint" style="color:var(--amb)">⚠ Draw an ROI on the image above.</div>
+    </div>
+    <div class="vcm-ftr">
+      <button class="btn-sm" onclick="closeCondModal()">Cancel</button>
+      <button class="btn-t" onclick="createCondition()">Create</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

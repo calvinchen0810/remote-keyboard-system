@@ -12,6 +12,8 @@ if "%HOST%"=="" set "HOST=0.0.0.0"
 if "%PORT%"=="" set "PORT=8000"
 if "%AUTO_CONNECT_SERIAL%"=="" set "AUTO_CONNECT_SERIAL=1"
 if "%CAMERA_INDEX%"=="" set "CAMERA_INDEX=0"
+if "%CAMERA_WIDTH%"=="" set "CAMERA_WIDTH=1280"
+if "%CAMERA_HEIGHT%"=="" set "CAMERA_HEIGHT=720"
 if "%JPEG_QUALITY%"=="" set "JPEG_QUALITY=75"
 
 echo ======================================
@@ -20,6 +22,7 @@ echo HOST=%HOST%
 echo PORT=%PORT%
 echo AUTO_CONNECT_SERIAL=%AUTO_CONNECT_SERIAL%
 echo CAMERA_INDEX=%CAMERA_INDEX%
+echo CAMERA_WIDTH=%CAMERA_WIDTH%  CAMERA_HEIGHT=%CAMERA_HEIGHT%
 echo JPEG_QUALITY=%JPEG_QUALITY%
 echo ======================================
 echo.
