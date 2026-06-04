@@ -94,6 +94,7 @@ def create_servo_router() -> tuple[APIRouter, ServoSerial, SrvWSManager]:
     ws_mgr     = SrvWSManager()
 
     def on_serial_line(line: str):
+        logger.info(f"[SRV] ← {line}")
         ws_mgr.broadcast_sync({"type": "serial", "line": line})
         if line.startswith("OK RUNNING ") and "/" in line:
             try:
@@ -117,9 +118,11 @@ def create_servo_router() -> tuple[APIRouter, ServoSerial, SrvWSManager]:
             ws_mgr.broadcast_sync({"type": "error", "message": line})
 
     def on_serial_send(cmd: str):
+        logger.info(f"[SRV] → {cmd}")
         ws_mgr.broadcast_sync({"type": "serial", "line": f"→ {cmd}"})
 
     def on_disconnect():
+        logger.info("[SRV] disconnected")
         ws_mgr.broadcast_sync({"type": "status", "state": "disconnected",
                                 "port": None, "attached": {}})
 

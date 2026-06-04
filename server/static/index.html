@@ -269,6 +269,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <div class="tbsep"></div>
   <div class="led led-dim" id="cam-led"></div>
   <span style="font-family:var(--mono);font-size:10px;color:var(--fg2)">CAM</span>
+  <select id="cam-dev-sel" style="width:clamp(90px,10vw,150px);font-size:10px;font-family:var(--mono);background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:1px 3px;outline:none" onchange="camDevIdx=parseInt(this.value)||0"><option value="0">Camera 0</option></select>
+  <button class="btn-sm" id="cam-scan-btn" onclick="scanCamDevices()" title="Scan cameras" style="padding:2px 6px">⟳</button>
   <button class="btn-sm" id="cam-toggle-btn" onclick="camToggle()">OFF</button>
   <div class="tbsep"></div>
   <div class="tb-grp">
@@ -795,9 +797,9 @@ function renderSteps(){
           <select class="ti-s" style="width:54px" onchange="updStep(${s._id},'mod2',this.value)">${mk(s.mod2)}</select>+
           <input class="ti" value="${esc(s.key||'C')}" style="width:28px;text-transform:uppercase" oninput="updStep(${s._id},'key',this.value.toUpperCase())">`;
       } else if(s.cmd_type==='TYPE'){
-        fields=`<input class="ti" value="${esc(s.text||'')}" style="width:calc(100% - 70px)" oninput="updStep(${s._id},'text',this.value)">`;
+        fields=`<input class="ti" value="${esc(s.text||'')}" style="width:260px;max-width:100%" oninput="updStep(${s._id},'text',this.value)">`;
       } else {
-        const SKEYS=['ENTER','ESC','TAB','DELETE','UP','DOWN','LEFT','RIGHT','HOME','END','PAGEUP','PAGEDOWN','F1','F2','F3','F4','F5'];
+        const SKEYS=['ENTER','ESC','TAB','DELETE','UP','DOWN','LEFT','RIGHT','HOME','END','PAGEUP','PAGEDOWN','F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12'];
         fields=`<select class="ti-s" style="width:80px" onchange="updStep(${s._id},'key',this.value)">${SKEYS.map(k=>`<option${k===(s.key||'ENTER')?' selected':''}>${k}</option>`).join('')}</select>`;
       }
       params=`<select class="ti-s" style="width:72px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>
@@ -840,27 +842,92 @@ function updStep(id,key,val){const s=steps.find(x=>x._id===id);if(!s)return;cons
 function updStepKbd(id,t){const s=steps.find(x=>x._id===id);if(s){s.cmd_type=t;renderSteps();}}
 function updStepMse(id,t){const s=steps.find(x=>x._id===id);if(s){s.action=t;renderSteps();}}
 
+function collectImgBundle(){
+  const conditionIds=[...new Set(
+    steps
+      .map(s=>(s.evt||'').trim())
+      .filter(evt=>evt.startsWith('IMG.MATCH.'))
+      .map(evt=>evt.slice('IMG.MATCH.'.length))
+  )];
+  const bundle={conditions:[],snapshots:[]};
+  const missing=[];
+  const seenSnapshots=new Set();
+  conditionIds.forEach(cid=>{
+    const cond=conditions.find(c=>c.condition_id===cid);
+    if(!cond){missing.push(`missing condition ${cid}`);return;}
+    const snap=snapshots.find(s=>s.id===cond.snapshot_id);
+    if(!snap){missing.push(`missing snapshot ${cond.snapshot_id} for ${cid}`);return;}
+    bundle.conditions.push({
+      condition_id:cond.condition_id,
+      name:cond.name,
+      snapshot_id:cond.snapshot_id,
+      roi:cond.roi,
+      threshold:cond.threshold,
+      min_hits:cond.min_hits,
+      cooldown_ms:cond.cooldown_ms
+    });
+    if(!seenSnapshots.has(snap.id)){
+      seenSnapshots.add(snap.id);
+      bundle.snapshots.push({snapshot_id:snap.id,jpeg_b64:snap.thumb_b64});
+    }
+  });
+  return {bundle,conditionIds,missing};
+}
+
 function exportJSON(){
   const out=steps.map(({_id,...s})=>s);
   const attachCmds=Object.entries(attachedMap)
     .sort((a,b)=>parseInt(a[0])-parseInt(b[0]))
     .map(([sid,pin])=>`ATTACH ${sid} ${pin}`);
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([JSON.stringify({
+  const img=collectImgBundle();
+  const payload={
+    schema_version:img.bundle.conditions.length?2:1,
     loop:document.getElementById('loop-cb').checked,
     servos:attachedMap,
     attach_cmds:attachCmds,
     steps:out
-  },null,2)],{type:'application/json'}));
-  a.download='rks_script.json';a.click();
+  };
+  if(img.bundle.conditions.length){
+    payload.img_bundle=img.bundle;
+  }
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));
+  a.download=img.bundle.conditions.length?'rks_script_bundle.json':'rks_script.json';a.click();
+  if(img.bundle.conditions.length){
+    addLog('srv',`Exported bundle: ${img.bundle.conditions.length} IMG cond / ${img.bundle.snapshots.length} snapshot(s)`,'cok');
+  } else {
+    addLog('srv',`Exported ${out.length} steps`,'cok');
+  }
+  img.missing.forEach(msg=>addLog('srv','⚠ '+msg,'cerr'));
 }
 function importJSON(){document.getElementById('file-input').click();}
 function handleImport(e){
   const file=e.target.files[0];if(!file)return;
   const r=new FileReader();
-  r.onload=ev=>{try{const d=JSON.parse(ev.target.result);
-    if(typeof d.loop==='boolean')document.getElementById('loop-cb').checked=d.loop;
-    if(Array.isArray(d.steps)){steps=normalizeImportedSteps(d.steps).map(s=>({...s,_id:++stepIdCnt}));renderSteps();addLog('srv','Imported '+steps.length+' steps','cok');}
+  r.onload=async ev=>{try{const d=JSON.parse(ev.target.result);
+    let imported=d;
+    const hasBundle=d.img_bundle&&Array.isArray(d.img_bundle.conditions)&&Array.isArray(d.img_bundle.snapshots)&&d.img_bundle.conditions.length;
+    if(hasBundle){
+      const rr=await fetch('/script/import_bundle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        loop:!!d.loop,
+        servos:d.servos||{},
+        attach_cmds:d.attach_cmds||[],
+        steps:Array.isArray(d.steps)?d.steps:[],
+        img_bundle:d.img_bundle
+      })});
+      const bundleResp=await rr.json().catch(()=>({}));
+      if(!rr.ok){addLog('srv','✘ Bundle import failed: '+(bundleResp.detail||rr.status),'cerr');return;}
+      imported=bundleResp;
+      await refreshSnapList();
+      await refreshCondList();
+      addLog('srv',`Imported IMG bundle: ${bundleResp.img_import.conditions} cond / ${bundleResp.img_import.snapshots} snapshot(s)`,'cok');
+    }
+    if(typeof imported.loop==='boolean')document.getElementById('loop-cb').checked=imported.loop;
+    if(Array.isArray(imported.steps)){
+      steps=normalizeImportedSteps(imported.steps).map(s=>({...s,_id:++stepIdCnt}));
+      renderSteps();
+      addLog('srv','Imported '+steps.length+' steps','cok');
+    }
   }catch{addLog('srv','✘ Invalid JSON','cerr');}};
   r.readAsText(file);e.target.value='';
 }
@@ -1106,6 +1173,11 @@ function srvWSConnect(){
     else if(msg.type==='done'){applySrvStatus({state:'idle'});setProgress(null,null);setProgMsg('✔ done');document.getElementById('prog-badge').style.display='none';}
     else if(msg.type==='error') addLog('srv','ERR '+msg.message,'cerr');
     else if(msg.type==='script_pool') setEvtPoolData(msg);
+    else if(msg.type==='visual_sync'){
+      refreshSnapList();
+      refreshCondList();
+      addLog('srv',`↻ Visual sync  snapshots=${msg.snapshots||0}  conditions=${msg.conditions||0}`,'cok');
+    }
   }catch(_){}};
   srvWS.onclose=()=>{addLog('srv','WS disconnected, retry 3s...','cerr');setTimeout(srvWSConnect,3000);};
 }
@@ -1205,13 +1277,45 @@ function manualSend(){
 
 // ── Webcam ───────────────────────────────────────────────────
 let camEnabled = false;
+let camDevIdx = 0;
 
 function camToggle(){
   if(camEnabled) camStop(); else camStart();
 }
+async function scanCamDevices(){
+  const btn = document.getElementById('cam-scan-btn');
+  if(btn) btn.disabled = true;
+  try{
+    const r = await fetch('/camera/devices');
+    const d = await r.json();
+    const sel = document.getElementById('cam-dev-sel');
+    const cur = sel.value;
+    sel.innerHTML = '';
+    const devs = d.devices || [];
+    if(devs.length === 0){
+      sel.innerHTML = '<option value="0">Camera 0</option>';
+    } else {
+      devs.forEach(dev=>{
+        const o = document.createElement('option');
+        o.value = dev.index;
+        o.text = dev.label;
+        sel.appendChild(o);
+      });
+    }
+    // restore previous selection if still available
+    if(cur && [...sel.options].some(o=>o.value===cur)) sel.value = cur;
+    camDevIdx = parseInt(sel.value) || 0;
+  }catch(e){ addLog('srv','Camera scan error: '+e,'cerr'); }
+  finally{ if(btn) btn.disabled = false; }
+}
 async function camStart(){
   try{
-    const r = await fetch('/camera/start', {method:'POST'});
+    camDevIdx = parseInt(document.getElementById('cam-dev-sel').value) || 0;
+    const r = await fetch('/camera/start', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({index: camDevIdx})
+    });
     if(!r.ok){ addLog('srv','Camera start failed: '+r.status,'cerr'); return; }
     camEnabled = true;
     const btn = document.getElementById('cam-toggle-btn');
@@ -1286,7 +1390,7 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
 // ── Visual Trigger ────────────────────────────────────────────
-let snapshots=[], conditions=[], vcmSnapId=null, vcmRoi=null;
+let snapshots=[], conditions=[], vcmSnapId=null, vcmRoi=null, vcmEditCid=null;
 let roiDraw={active:false,sx:0,sy:0,ex:0,ey:0};
 
 /* Snapshot pool */
@@ -1328,6 +1432,7 @@ async function deleteSnapshot(id){
 /* Condition modal + ROI drawing */
 function openCondModal(snapId){
   vcmSnapId=snapId;
+  vcmEditCid=null;
   vcmRoi=null;
   const snap=snapshots.find(s=>s.id===snapId);
   if(!snap)return;
@@ -1340,13 +1445,45 @@ function openCondModal(snapId){
   document.getElementById('vcm-hits').value=3;
   document.getElementById('vcm-cool').value=3000;
   document.getElementById('vcm-roi-hint').style.display='';
+  document.getElementById('vcm-modal-title').textContent='// Create Visual Condition';
+  const sb=document.getElementById('vcm-submit-btn');
+  sb.textContent='Create'; sb.onclick=createCondition;
   clearRoi();
+  document.getElementById('vcModal').classList.add('open');
+}
+function openCondModalEdit(cidEnc){
+  const cid=decodeURIComponent(cidEnc);
+  const cond=conditions.find(c=>c.condition_id===cid);
+  if(!cond){addLog('srv','Condition not found','cerr');return;}
+  const snap=snapshots.find(s=>s.id===cond.snapshot_id);
+  vcmEditCid=cid;
+  vcmSnapId=cond.snapshot_id;
+  vcmRoi=cond.roi?[...cond.roi]:null;
+  const img=document.getElementById('vcm-snap-img');
+  if(snap){
+    img.src='data:image/jpeg;base64,'+snap.thumb_b64;
+    img.onload=()=>{syncDrawCanvas();if(vcmRoi)drawSavedRoi(vcmRoi);};
+  } else {
+    img.src='';
+    img.onload=null;
+  }
+  document.getElementById('vcm-name').value=cond.name;
+  const thrPct=Math.round(cond.threshold*100);
+  document.getElementById('vcm-thr').value=thrPct;
+  document.getElementById('vcm-thr-val').textContent=cond.threshold.toFixed(2);
+  document.getElementById('vcm-hits').value=cond.min_hits;
+  document.getElementById('vcm-cool').value=cond.cooldown_ms;
+  document.getElementById('vcm-roi-hint').style.display=vcmRoi?'none':'';
+  document.getElementById('vcm-modal-title').textContent='// Edit Condition';
+  const sb=document.getElementById('vcm-submit-btn');
+  sb.textContent='Save'; sb.onclick=saveCondition;
   document.getElementById('vcModal').classList.add('open');
 }
 function closeCondModal(){
   document.getElementById('vcModal').classList.remove('open');
   vcmSnapId=null;
   vcmRoi=null;
+  vcmEditCid=null;
 }
 function syncDrawCanvas(){
   const wrap=document.getElementById('vcm-snap-wrap');
@@ -1358,9 +1495,17 @@ function syncDrawCanvas(){
   rc.width=dc.width;rc.height=dc.height;
 }
 function clearRoi(){
+  vcmRoi=null;
+  roiDraw={active:false,sx:0,sy:0,ex:0,ey:0};
   const rc=document.getElementById('vcm-roi-canvas');
   const ctx=rc.getContext('2d');
   ctx.clearRect(0,0,rc.width,rc.height);
+}
+function drawSavedRoi(roi){
+  const [rx,ry,rw,rh]=roi;
+  roiDraw.sx=rx; roiDraw.sy=ry;
+  roiDraw.ex=rx+rw; roiDraw.ey=ry+rh;
+  drawRoiOverlay();
 }
 function roiMouseDown(e){
   const dc=document.getElementById('vcm-draw-canvas');
@@ -1404,6 +1549,25 @@ function drawRoiOverlay(){
   ctx.strokeRect(rx*W,ry*H,rw*W,rh*H);
   ctx.fillStyle='rgba(45,212,191,0.08)';
   ctx.fillRect(rx*W,ry*H,rw*W,rh*H);
+}
+async function saveCondition(){
+  if(!vcmEditCid){return;}
+  const name=document.getElementById('vcm-name').value.trim();
+  if(!name){alert('Please enter a condition name.');return;}
+  const threshold=parseFloat((document.getElementById('vcm-thr').value/100).toFixed(2));
+  const min_hits=parseInt(document.getElementById('vcm-hits').value)||3;
+  const cooldown_ms=parseInt(document.getElementById('vcm-cool').value)||3000;
+  const body={name,threshold,min_hits,cooldown_ms};
+  if(vcmRoi) body.roi=vcmRoi;
+  try{
+    const r=await fetch('/visual/conditions/'+encodeURIComponent(vcmEditCid),{
+      method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok){alert('Error: '+(d.detail||r.status));return;}
+    addLog('srv',`✓ Condition "${name}" updated`,'cok');
+    closeCondModal();
+    await refreshCondList();
+  }catch(e){alert('Error: '+e);}
 }
 async function createCondition(){
   if(!vcmSnapId){return;}
@@ -1457,6 +1621,7 @@ function renderCondList(){
           ?`<button class="btn-sm btn-sm" onclick="disarmCond('${cidEnc}')">DISARM</button>`
           :`<button class="btn-g btn-sm" onclick="armCond('${cidEnc}')">ARM</button>`}
         <button class="btn-b btn-sm" onclick="testCond('${cidEnc}')">TEST</button>
+        <button class="btn-p btn-sm" onclick="openCondModalEdit('${cidEnc}')">EDIT</button>
         <button class="btn-t btn-sm" onclick="addImgStepDirect('${cidEnc}','${esc(c.name)}')">+SCRIPT</button>
         <button class="del-btn" onclick="deleteCond('${cidEnc}')" title="Delete">✕</button>
       </div>
@@ -1544,6 +1709,7 @@ refreshScriptStatus();
 setInterval(refreshScriptStatus,4000);
 refreshCondList();
 refreshSnapList();
+scanCamDevices();
 addLog('srv','RKS v4 ready','cdim');
 addLog('kbm','RKS v4 ready','cdim');
 </script>
@@ -1557,7 +1723,7 @@ addLog('kbm','RKS v4 ready','cdim');
 <div id="vcModal">
   <div id="vcModal-box">
     <div class="vcm-hdr">
-      <span>// Create Visual Condition</span>
+      <span id="vcm-modal-title">// Create Visual Condition</span>
       <button class="btn-sm" style="margin-left:auto" onclick="closeCondModal()">✕</button>
     </div>
     <div class="vcm-body">
@@ -1592,7 +1758,7 @@ addLog('kbm','RKS v4 ready','cdim');
     </div>
     <div class="vcm-ftr">
       <button class="btn-sm" onclick="closeCondModal()">Cancel</button>
-      <button class="btn-t" onclick="createCondition()">Create</button>
+      <button class="btn-t" id="vcm-submit-btn" onclick="createCondition()">Create</button>
     </div>
   </div>
 </div>

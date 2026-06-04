@@ -65,6 +65,11 @@ class KeyboardSerial:
             return True
         except serial.SerialException as e:
             logger.error(f"KBM connect failed: {e}")
+            if "Access is denied" in str(e) or "PermissionError" in str(e):
+                logger.error(
+                    "KBM connect hint: COM port is busy. Close Arduino Serial Monitor/IDE, "
+                    "other terminal tools, or any app that may hold the port."
+                )
             self._serial = None
             return False
 

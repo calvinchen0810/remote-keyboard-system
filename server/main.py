@@ -33,7 +33,7 @@ import cv2
 import serial
 import serial.tools.list_ports
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -135,17 +135,15 @@ class SnapshotPool:
         self._lock = threading.Lock()
         self._items: dict = {}  # snap_id -> dict
 
-    def add(self, frame: Any) -> dict:
-        """Encode BGR frame to JPEG, store in pool, return metadata (without full b64)."""
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        if not ok:
-            raise ValueError("Failed to encode frame to JPEG")
-        h, w = frame.shape[:2]
-        snap_id = uuid.uuid4().hex[:8]
+    def _store_jpeg_bytes(self, jpeg_bytes: bytes, snap_id: Optional[str] = None) -> dict:
+        img = cv2.imdecode(np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("Failed to decode JPEG snapshot")
+        h, w = img.shape[:2]
         created_at = time.time()
         item = {
-            "id": snap_id,
-            "jpeg_b64": base64.b64encode(buf.tobytes()).decode(),
+            "id": snap_id or uuid.uuid4().hex[:8],
+            "jpeg_b64": base64.b64encode(jpeg_bytes).decode(),
             "width": w,
             "height": h,
             "created_at": created_at,
@@ -158,8 +156,22 @@ class SnapshotPool:
             if len(self._items) >= self.MAX_ITEMS:
                 oldest = min(self._items, key=lambda k: self._items[k]["created_at"])
                 del self._items[oldest]
-            self._items[snap_id] = item
-        return {"id": snap_id, "width": w, "height": h, "created_at": created_at}
+            self._items[item["id"]] = item
+        return {"id": item["id"], "width": w, "height": h, "created_at": created_at}
+
+    def add(self, frame: Any) -> dict:
+        """Encode BGR frame to JPEG, store in pool, return metadata (without full b64)."""
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ok:
+            raise ValueError("Failed to encode frame to JPEG")
+        return self._store_jpeg_bytes(buf.tobytes())
+
+    def add_b64(self, jpeg_b64: str) -> dict:
+        try:
+            jpeg_bytes = base64.b64decode(jpeg_b64)
+        except Exception as exc:
+            raise ValueError("Invalid base64 snapshot payload") from exc
+        return self._store_jpeg_bytes(jpeg_bytes)
 
     def get(self, snap_id: str) -> Optional[dict]:
         with self._lock:
@@ -285,6 +297,17 @@ class ConditionManager:
         with self._lock:
             if cid in self._conditions:
                 self._conditions[cid].enabled = False
+
+    def update(self, cid: str, **kwargs) -> bool:
+        with self._lock:
+            cond = self._conditions.get(cid)
+            if not cond:
+                return False
+            for k, v in kwargs.items():
+                if v is not None and hasattr(cond, k):
+                    setattr(cond, k, v)
+            self._save()
+            return True
 
     def delete(self, cid: str) -> bool:
         with self._lock:
@@ -541,15 +564,20 @@ def _setup_kbm_callbacks():
         kbm_ws.broadcast_sync({"type": "serial", "line": line})
         if line.startswith("EVT:"):
             evt = line[4:].strip()
+            logger.info(f"[KBM] EVT received: {evt}")
             kbm_ws.broadcast_sync({"type": "event", "evt": evt, "raw": line})
             try:
                 if kbm_ws._loop and kbm_ws._loop.is_running():
                     asyncio.run_coroutine_threadsafe(_emit_event_and_release(evt), kbm_ws._loop)
             except Exception:
                 pass
+        else:
+            logger.info(f"[KBM] ← {line}")
     def on_send(cmd: str):
+        logger.info(f"[KBM] → {cmd}")
         kbm_ws.broadcast_sync({"type": "serial", "line": f"→ {cmd}"})
     def on_disconnect():
+        logger.info("[KBM] disconnected")
         kbm_ws.broadcast_sync({"type": "status", "state": "disconnected", "port": None})
     kb_serial.on_line(on_line)
     kb_serial.on_send(on_send)
@@ -570,6 +598,27 @@ async def _activate_script(req: "MixedScriptRequest") -> int:
     return _script_queue.qsize()
 
 
+async def _auto_attach_servos(req: "MixedScriptRequest"):
+    """Auto-attach servos needed by req if SRV is connected and not yet attached."""
+    if not srv_serial.is_connected:
+        return
+    loop_ = asyncio.get_event_loop()
+    used_sids = {s.servo_id for s in req.steps if s.type == "srv" and s.servo_id}
+    pin_map   = {int(k): v for k, v in (req.servos or {}).items()}
+    for sid in sorted(used_sids):
+        if sid in srv_serial.attached:
+            continue
+        pin = pin_map.get(sid)
+        if pin is None:
+            continue
+        ok = await loop_.run_in_executor(
+            executor,
+            lambda s=sid, p=pin: srv_serial.attach_servo_and_wait(s, p)
+        )
+        if not ok:
+            logger.warning(f"Auto ATTACH 失敗 sid={sid}")
+
+
 async def _release_pending_for_event(evt: str, source: str = "event"):
     released = await pending_evt_pool.drain(evt)
     if not released:
@@ -577,6 +626,7 @@ async def _release_pending_for_event(evt: str, source: str = "event"):
     released_ids = []
     released_cnt = 0
     for item in released:
+        await _auto_attach_servos(item["req"])
         await _activate_script(item["req"])
         released_cnt += 1
         released_ids.append(item["id"])
@@ -626,11 +676,61 @@ def _probe_serial_port(port: str, baud: int, probe_cmd: str, ok_prefixes: tuple[
     return False
 
 
+def _probe_kbm_port(port: str) -> bool:
+    """
+    Probe for Nano_KB bridge by detecting its startup banner.
+    The Nano_KB prints "[Nano_KB] Bridge ready. 38400 baud." on reset,
+    which is triggered when the serial port is opened (DTR). This avoids
+    requiring a PING round-trip through the SoftwareSerial bridge to Pro Micro.
+    Falls back to PING round-trip if banner is not seen (e.g., Nano already
+    running and banner was already emitted before this probe).
+    """
+    ser = None
+    try:
+        ser = serial.Serial(port, baudrate=38400, timeout=0.5)
+        # Read for up to 2.5 s; Arduino resets on DTR and emits its banner within ~1 s.
+        deadline = time.monotonic() + 2.5
+        while time.monotonic() < deadline:
+            raw = ser.readline()
+            if not raw:
+                continue
+            line = raw.decode("utf-8", errors="replace").strip()
+            if "[Nano_KB]" in line or "Bridge ready" in line:
+                return True
+        # Banner not seen; try PING round-trip through bridge as fallback.
+        ser.reset_input_buffer()
+        ser.write(b"PING\n")
+        ser.flush()
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline:
+            raw = ser.readline()
+            if not raw:
+                continue
+            line = raw.decode("utf-8", errors="replace").strip().upper()
+            if line.startswith("OK") or line.startswith("ERR"):
+                return True
+    except Exception:
+        return False
+    finally:
+        try:
+            if ser and ser.is_open:
+                ser.close()
+        except Exception:
+            pass
+    return False
+
+
 async def _auto_connect_serial_devices():
     if not AUTO_CONNECT_SERIAL:
         logger.info("AUTO_CONNECT_SERIAL disabled")
         return
-    ports = [p.device for p in serial.tools.list_ports.comports()]
+    all_ports = list(serial.tools.list_ports.comports())
+    ports = [p.device for p in all_ports]
+    logger.info(
+        "Auto connect: found %d port(s): %s",
+        len(all_ports),
+        ", ".join(f"{p.device}({p.description})" for p in all_ports) if all_ports else "none",
+    )
     if not ports:
         logger.info("Auto connect: no serial ports found")
         return
@@ -641,6 +741,7 @@ async def _auto_connect_serial_devices():
 
     # Probe SRV first (115200, supports PING -> OK PONG / READY family).
     for port in ports:
+        logger.info(f"Auto probe SRV: {port}")
         try:
             ok = await asyncio.wait_for(
                 loop.run_in_executor(
@@ -653,27 +754,34 @@ async def _auto_connect_serial_devices():
             logger.warning(f"Auto probe SRV timeout: {port}")
             ok = False
         if ok:
+            logger.info(f"Auto probe SRV matched: {port}")
             srv_port = port
             break
+        else:
+            logger.info(f"Auto probe SRV no match: {port}")
 
-    # Probe KBM on remaining ports (38400, PING should return OK/ERR).
+    # Probe KBM on remaining ports (38400, detect Nano_KB startup banner).
     for port in ports:
         if port == srv_port:
             continue
+        logger.info(f"Auto probe KBM: {port}")
         try:
             ok = await asyncio.wait_for(
                 loop.run_in_executor(
                     executor,
-                    lambda p=port: _probe_serial_port(p, 38400, "PING", ("OK", "ERR")),
+                    lambda p=port: _probe_kbm_port(p),
                 ),
-                timeout=4.0,
+                timeout=6.0,
             )
         except asyncio.TimeoutError:
             logger.warning(f"Auto probe KBM timeout: {port}")
             ok = False
         if ok:
+            logger.info(f"Auto probe KBM matched: {port}")
             kbm_port = port
             break
+        else:
+            logger.info(f"Auto probe KBM no match: {port}")
 
     if srv_port and not srv_serial.is_connected:
         try:
@@ -769,7 +877,7 @@ async def _eval_condition(cond: MatchCondition, rt: ConditionRuntime, frame: Any
         rt.cooldown_until = now + cond.cooldown_ms / 1000.0
         condition_manager.update_runtime(cond.condition_id, rt)
         evt = f"IMG.MATCH.{cond.condition_id}"
-        logger.info(f"Visual trigger fired: {evt}  score={score:.3f}")
+        logger.info(f"[IMG] MATCH fired: evt={evt}  score={score:.3f}  condition='{cond.name}'")
         await _emit_event_and_release(evt)
         msg = {"type": "visual_fire", "condition_id": cond.condition_id, "evt": evt, "score": round(score, 3)}
         await kbm_ws.broadcast(msg)
@@ -795,6 +903,27 @@ async def _visual_monitor_task():
         await asyncio.sleep(1.0 / 3)  # ~3 fps polling
 
 
+def _is_service_ready() -> bool:
+    cam_ready = bool(camera and camera.isOpened())
+    return cam_ready and srv_serial.is_connected and kb_serial.is_connected
+
+
+async def _service_ready_monitor_task():
+    """Log a one-shot readiness line when camera + SRV + KBM are all ready."""
+    ready_logged = False
+    while True:
+        try:
+            ready = _is_service_ready()
+            if ready and not ready_logged:
+                logger.info("service ready for script input")
+                ready_logged = True
+            elif not ready and ready_logged:
+                ready_logged = False
+        except Exception as exc:
+            logger.exception(f"Service-ready monitor error: {exc}")
+        await asyncio.sleep(0.5)
+
+
 # ── Lifespan ─────────────────────────────────────────────────
 _bg_tasks: list[asyncio.Task] = []
 
@@ -805,9 +934,23 @@ async def lifespan(app: FastAPI):
     srv_ws.set_loop(loop)
     kbm_ws.set_loop(loop)
     event_bus.set_loop(loop)
+    # Auto-open webcam at startup so visual condition matching works without
+    # requiring the web page to be opened first.
+    try:
+        cam = await loop.run_in_executor(executor, _open_camera, CAMERA_INDEX)
+        if cam.isOpened():
+            camera = cam
+            frame_buffer.start(camera)
+            logger.info(f"Camera auto-started: index={CAMERA_INDEX}, Camera ready")
+        else:
+            cam.release()
+            logger.warning(f"Camera auto-start failed: index={CAMERA_INDEX} not opened")
+    except Exception as _cam_exc:
+        logger.warning(f"Camera auto-start error: {_cam_exc}")
     # Run serial auto-connect in background so startup is never blocked by COM probing.
     _bg_tasks.append(asyncio.create_task(_auto_connect_serial_devices()))
     _bg_tasks.append(asyncio.create_task(_visual_monitor_task()))
+    _bg_tasks.append(asyncio.create_task(_service_ready_monitor_task()))
     yield
     # Cancel all background tasks and wait for them to finish.
     for t in _bg_tasks:
@@ -946,6 +1089,7 @@ async def _wait_for_step_event(step: MixedStep, idx: int, total: int) -> bool:
     })
     try:
         matched = await event_bus.wait_for(step.evt)
+        logger.info(f"[EVT] step={idx} satisfied: {matched}")
         await kbm_ws.broadcast({
             "type": "script_event",
             "step": idx,
@@ -954,6 +1098,7 @@ async def _wait_for_step_event(step: MixedStep, idx: int, total: int) -> bool:
         })
         return True
     except TimeoutError as exc:
+        logger.warning(f"[EVT] step={idx} TIMEOUT waiting for: {step.evt}")
         await kbm_ws.broadcast({
             "type": "script_error",
             "step": idx,
@@ -996,6 +1141,7 @@ async def _run_mixed_script(req: MixedScriptRequest):
                 })
 
                 if step.type == "evt":
+                    logger.info(f"[STEP {i+1}/{total}] EVT wait: {step.evt}")
                     ok_evt = await _wait_for_step_event(step, i, total)
                     if not ok_evt:
                         return
@@ -1017,6 +1163,10 @@ async def _run_mixed_script(req: MixedScriptRequest):
                         "duration_ms": step.duration_ms if step.duration_ms is not None else 300,
                         "home":        step.home if step.home is not None else 1,
                     }
+                    logger.info(
+                        f"[STEP {i+1}/{total}] SRV sid={params['servo_id']} angle={params['angle']} "
+                        f"speed={params['speed']} duration={params['duration_ms']}ms"
+                    )
                     ok = await loop.run_in_executor(
                         executor, lambda p=params: srv_serial.send_command(p)
                     )
@@ -1026,6 +1176,7 @@ async def _run_mixed_script(req: MixedScriptRequest):
                     wait_s = hold / 1000 + angle * 0.01 + 0.25
                     await asyncio.sleep(wait_s)
                     if not ok:
+                        logger.warning(f"[STEP {i+1}/{total}] SRV failed")
                         await kbm_ws.broadcast({
                             "type": "script_error",
                             "step": i,
@@ -1034,10 +1185,12 @@ async def _run_mixed_script(req: MixedScriptRequest):
 
                 elif step.type == "kbd":
                     cmd = _resolve_kbd_cmd(step)
+                    logger.info(f"[STEP {i+1}/{total}] KBD {cmd}")
                     result = await loop.run_in_executor(
                         executor, kb_serial.send, cmd
                     )
                     if result != "OK":
+                        logger.warning(f"[STEP {i+1}/{total}] KBD ACK={result} cmd={cmd}")
                         await kbm_ws.broadcast({
                             "type": "script_error",
                             "step": i,
@@ -1046,10 +1199,12 @@ async def _run_mixed_script(req: MixedScriptRequest):
 
                 elif step.type == "mse":
                     cmd = _resolve_mse_cmd(step)
+                    logger.info(f"[STEP {i+1}/{total}] MSE {cmd}")
                     result = await loop.run_in_executor(
                         executor, kb_serial.send, cmd
                     )
                     if result != "OK":
+                        logger.warning(f"[STEP {i+1}/{total}] MSE ACK={result} cmd={cmd}")
                         await kbm_ws.broadcast({
                             "type": "script_error",
                             "step": i,
@@ -1164,7 +1319,7 @@ async def kbm_send(event: KeyEvent):
 #  Routes: 混合腳本執行（支援 curl --data-binary @file.json）
 # ═══════════════════════════════════════════════════════════════
 @app.post("/script/run")
-async def script_run(req: MixedScriptRequest):
+async def script_run(request: Request):
     """
     執行混合腳本（SRV + KBD + MSE 步驟）。
 
@@ -1173,6 +1328,28 @@ async def script_run(req: MixedScriptRequest):
            -H "Content-Type: application/json" \\
            --data-binary "@exported_script.json"
     """
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "JSON body 必須是 object")
+
+    img_import_summary = {
+        "snapshots": 0,
+        "conditions": 0,
+        "condition_map": {},
+    }
+
+    if isinstance(payload.get("img_bundle"), dict):
+        bundle_req = ScriptBundleImportRequest.model_validate(payload)
+        bundle_result = await script_import_bundle(bundle_req)
+        img_import_summary = bundle_result["img_import"]
+        payload = {
+            "loop": bundle_result["loop"],
+            "servos": bundle_result["servos"],
+            "attach_cmds": bundle_result["attach_cmds"],
+            "steps": bundle_result["steps"],
+        }
+
+    req = MixedScriptRequest.model_validate(payload)
     req = _normalize_script_request(req)
 
     if not req.steps:
@@ -1190,6 +1367,10 @@ async def script_run(req: MixedScriptRequest):
     if (_script_runner_task is None or _script_runner_task.done()) and _script_queue.empty():
         await event_bus.clear()
 
+    # Auto-attach servos before any pending/queue logic so it runs regardless
+    # of whether the script goes pending or is queued immediately.
+    await _auto_attach_servos(req)
+
     if gate_evt:
         immediate = await event_bus.consume_if_available(gate_evt)
         if immediate is None:
@@ -1202,29 +1383,12 @@ async def script_run(req: MixedScriptRequest):
                 "pending": True,
                 "gate_evt": gate_evt,
                 "queued": _script_queue.qsize(),
+                "img_import": img_import_summary,
             }
-            req = PendingScriptPool._consume_gate_step(req, gate_evt)
+        req = PendingScriptPool._consume_gate_step(req, gate_evt)
 
     queued = await _activate_script(req)
     await _notify_pool_snapshot()
-
-    # auto-attach servos 需要的 sid
-    if srv_serial.is_connected:
-        loop_ = asyncio.get_event_loop()
-        used_sids = {s.servo_id for s in req.steps if s.type == "srv" and s.servo_id}
-        pin_map   = {int(k): v for k, v in (req.servos or {}).items()}
-        for sid in sorted(used_sids):
-            if sid in srv_serial.attached:
-                continue
-            pin = pin_map.get(sid)
-            if pin is None:
-                continue
-            ok = await loop_.run_in_executor(
-                executor,
-                lambda s=sid, p=pin: srv_serial.attach_servo_and_wait(s, p)
-            )
-            if not ok:
-                raise HTTPException(500, f"Auto ATTACH 失敗 sid={sid}")
 
     return {
         "ok":    True,
@@ -1232,6 +1396,7 @@ async def script_run(req: MixedScriptRequest):
         "loop":  req.loop,
         "pending": False,
         "queued": queued,
+        "img_import": img_import_summary,
     }
 
 @app.post("/script/stop")
@@ -1251,6 +1416,95 @@ async def script_stop():
     if srv_serial.is_connected:
         srv_serial.send("STOP")
     return {"ok": True}
+
+
+@app.post("/script/import_bundle")
+async def script_import_bundle(req: "ScriptBundleImportRequest"):
+    global camera
+    logger.info(
+        "[IMPORT] Bundle import started: %d snapshot(s), %d condition(s), %d step(s)",
+        len(req.img_bundle.snapshots) if req.img_bundle else 0,
+        len(req.img_bundle.conditions) if req.img_bundle else 0,
+        len(req.steps),
+    )
+    # Ensure camera is running whenever an IMG bundle is loaded (e.g. via curl with no UI).
+    if req.img_bundle and req.img_bundle.conditions and (not camera or not camera.isOpened()):
+        try:
+            loop_ = asyncio.get_event_loop()
+            cam = await loop_.run_in_executor(executor, _open_camera, CAMERA_INDEX)
+            if cam.isOpened():
+                camera = cam
+                frame_buffer.start(camera)
+                logger.info(f"Camera auto-started for IMG bundle import: index={CAMERA_INDEX}")
+            else:
+                cam.release()
+                logger.warning("Camera auto-start for IMG bundle import failed: not opened")
+        except Exception as _exc:
+            logger.warning(f"Camera auto-start for IMG bundle import error: {_exc}")
+
+    snapshot_map: dict[str, str] = {}
+    condition_map: dict[str, str] = {}
+
+    for snap in req.img_bundle.snapshots:
+        try:
+            meta = snapshot_pool.add_b64(snap.jpeg_b64)
+        except ValueError as exc:
+            raise HTTPException(422, f"Invalid snapshot {snap.snapshot_id}: {exc}") from exc
+        snapshot_map[snap.snapshot_id] = meta["id"]
+
+    for cond in req.img_bundle.conditions:
+        if len(cond.roi) != 4:
+            raise HTTPException(422, f"Invalid roi for condition {cond.condition_id}")
+        new_snapshot_id = snapshot_map.get(cond.snapshot_id)
+        if not new_snapshot_id:
+            raise HTTPException(422, f"Missing snapshot payload for condition {cond.condition_id}")
+        new_cid = condition_manager.add(
+            name=cond.name,
+            snapshot_id=new_snapshot_id,
+            roi=cond.roi,
+            threshold=cond.threshold,
+            min_hits=cond.min_hits,
+            cooldown_ms=cond.cooldown_ms,
+        )
+        condition_manager.arm(new_cid)
+        condition_map[cond.condition_id] = new_cid
+
+    remapped_steps: list[dict[str, Any]] = []
+    for step in req.steps:
+        data = step.model_dump()
+        evt_name = (data.get("evt") or "").strip()
+        if evt_name.startswith("IMG.MATCH."):
+            old_cid = evt_name[len("IMG.MATCH."):]
+            new_cid = condition_map.get(old_cid)
+            if new_cid:
+                data["evt"] = f"IMG.MATCH.{new_cid}"
+        remapped_steps.append(data)
+
+    img_import = {
+        "snapshots": len(snapshot_map),
+        "conditions": len(condition_map),
+        "condition_map": condition_map,
+    }
+    logger.info(
+        "[IMPORT] Bundle import done: snapshots=%d conditions=%d map=%s",
+        img_import["snapshots"], img_import["conditions"], condition_map,
+    )
+
+    if snapshot_map or condition_map:
+        await srv_ws.broadcast({
+            "type": "visual_sync",
+            "reason": "bundle_import",
+            **img_import,
+        })
+
+    return {
+        "ok": True,
+        "loop": req.loop,
+        "servos": req.servos,
+        "attach_cmds": req.attach_cmds,
+        "steps": remapped_steps,
+        "img_import": img_import,
+    }
 
 @app.get("/script/status")
 async def script_status():
@@ -1390,24 +1644,66 @@ async def video_stream():
 
 # ── Camera Toggle API ─────────────────────────────────────────
 
-def _open_camera() -> cv2.VideoCapture:
-    cap = cv2.VideoCapture(CAMERA_INDEX)
+class CameraStartRequest(BaseModel):
+    index: Optional[int] = None
+
+
+def _open_camera(idx: int) -> cv2.VideoCapture:
+    cap = cv2.VideoCapture(idx)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     return cap
 
+
+@app.get("/camera/devices")
+async def camera_devices():
+    """Probe indices 0-3 and return those that open successfully."""
+    def _probe():
+        found = []
+        # Silence OpenCV's C-level logger during probing so OBSensor/depth-camera
+        # backends don't spam "Camera index out of range" errors to the console.
+        try:
+            saved_level = cv2.getLogLevel()
+            cv2.setLogLevel(0)
+        except Exception:
+            saved_level = None
+        try:
+            for i in range(4):
+                cap = cv2.VideoCapture(i)
+                if cap.isOpened():
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    cap.release()
+                    found.append({"index": i, "label": f"Camera {i}  ({w}\u00d7{h})"})
+                else:
+                    cap.release()
+        finally:
+            if saved_level is not None:
+                try:
+                    cv2.setLogLevel(saved_level)
+                except Exception:
+                    pass
+        return found
+    loop = asyncio.get_running_loop()
+    devices = await loop.run_in_executor(executor, _probe)
+    return {"devices": devices}
+
+
 @app.post("/camera/start")
-async def camera_start():
+async def camera_start(req: Optional[CameraStartRequest] = None):
     global camera
+    idx = (req.index if req and req.index is not None else None)
+    if idx is None:
+        idx = CAMERA_INDEX
     if camera and camera.isOpened():
         return {"ok": True, "already": True}
     loop = asyncio.get_running_loop()
-    camera = await loop.run_in_executor(executor, _open_camera)
+    camera = await loop.run_in_executor(executor, _open_camera, idx)
     aw = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
     ah = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    logger.info(f"Camera opened: {aw}x{ah}")
+    logger.info(f"Camera opened index={idx}: {aw}x{ah}, Camera ready")
     frame_buffer.start(camera)
-    return {"ok": True, "width": aw, "height": ah}
+    return {"ok": True, "width": aw, "height": ah, "index": idx}
 
 @app.post("/camera/stop")
 async def camera_stop():
@@ -1434,6 +1730,43 @@ class CreateConditionRequest(BaseModel):
     threshold: float = Field(default=0.92, ge=0.5, le=1.0)
     min_hits: int = Field(default=3, ge=1, le=30)
     cooldown_ms: int = Field(default=3000, ge=100, le=60000)
+
+
+class UpdateConditionRequest(BaseModel):
+    name: Optional[str] = None
+    snapshot_id: Optional[str] = None
+    roi: Optional[list] = None
+    threshold: Optional[float] = Field(default=None, ge=0.5, le=1.0)
+    min_hits: Optional[int] = Field(default=None, ge=1, le=30)
+    cooldown_ms: Optional[int] = Field(default=None, ge=100, le=60000)
+
+
+class ScriptBundleSnapshot(BaseModel):
+    snapshot_id: str
+    jpeg_b64: str
+
+
+class ScriptBundleCondition(BaseModel):
+    condition_id: str
+    name: str
+    snapshot_id: str
+    roi: list
+    threshold: float = Field(default=0.92, ge=0.5, le=1.0)
+    min_hits: int = Field(default=3, ge=1, le=30)
+    cooldown_ms: int = Field(default=3000, ge=100, le=60000)
+
+
+class ScriptImgBundle(BaseModel):
+    conditions: list[ScriptBundleCondition] = Field(default_factory=list)
+    snapshots: list[ScriptBundleSnapshot] = Field(default_factory=list)
+
+
+class ScriptBundleImportRequest(BaseModel):
+    loop: bool = False
+    servos: dict[str, int] = Field(default_factory=dict)
+    attach_cmds: list[str] = Field(default_factory=list)
+    steps: list[MixedStep] = Field(default_factory=list, max_length=200)
+    img_bundle: ScriptImgBundle
 
 
 @app.post("/visual/snapshot")
@@ -1474,6 +1807,19 @@ async def visual_create_condition(req: CreateConditionRequest):
 @app.get("/visual/conditions")
 async def visual_list_conditions():
     return {"conditions": condition_manager.list_all()}
+
+
+@app.put("/visual/conditions/{cid}")
+async def visual_update_condition(cid: str, req: UpdateConditionRequest):
+    if not condition_manager.get(cid):
+        raise HTTPException(404, "Condition not found")
+    if req.snapshot_id is not None and not snapshot_pool.get(req.snapshot_id):
+        raise HTTPException(404, "Snapshot not found")
+    if req.roi is not None and len(req.roi) != 4:
+        raise HTTPException(422, "roi must be [x, y, w, h]")
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    condition_manager.update(cid, **updates)
+    return {"ok": True}
 
 
 @app.delete("/visual/conditions/{cid}")
