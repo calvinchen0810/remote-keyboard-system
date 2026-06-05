@@ -1,207 +1,197 @@
-# RKS — Remote Keyboard System
+# RKS - Remote Keyboard System
 
-透過網頁虛擬鍵盤遠端操控另一台電腦的鍵盤與滑鼠，並透過 Webcam 即時監看畫面，同時支援 Servo 實體按壓鍵盤。支援 curl 直接 POST 腳本 JSON 執行自動化。
+RKS is a FastAPI based remote input and visual-trigger automation system.
+It controls keyboard/mouse (KBM) and servo actions from a web UI or from curl script JSON.
 
----
-
-## 系統架構
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│ 電腦 2（控制端）                                                  │
-│  FastAPI :8000                                                   │
-│    ├── KeyboardSerial (38400) ──USB──► Nano_KB                   │
-│    │                                     └──SoftSerial──► Pro Micro Serial1 (38400)
-│    ├── ServoSerial (115200)  ──USB──► Nano_SRV ──PWM──► Servo×6 │
-│    └── GET /stream ──────────────────────── Webcam               │
-└──────────────────────────────────────────────────────────────────┘
-                                               │ USB HID
-                                        ┌──────▼──────────┐
-                                        │  電腦 1（被控端）│
-                                        │  接收 HID 鍵盤+鼠│
-                                        └─────────────────┘
-```
+- KBM path: Computer 2 -> Nano_KB -> Pro Micro -> USB HID to Computer 1
+- SRV path: Computer 2 -> Nano_SRV -> up to 6 servos
+- Vision path: Webcam on Computer 2 -> snapshot/condition matching -> IMG.MATCH events
 
 ---
 
-## 硬體清單
+## Architecture
 
-| 元件 | 數量 | 說明 |
-|------|------|------|
-| Arduino Pro Micro (ATmega32U4) | 1 | 插電腦1，USB HID 鍵盤+滑鼠 |
-| Arduino Nano（Nano_KB）| 1 | 插電腦2，橋接 KBM 指令 |
-| Arduino Nano（Nano_SRV）| 1 | 插電腦2，控制 Servo |
-| SG90 Servo | 最多 6 | 實體按壓電腦1鍵盤（≤30cm） |
-| USB 線 × 3 | 3 | 三個 Arduino 各一條 |
-| 杜邦線 × 3 | 3 | TX、RX、GND（Nano_KB ↔ Pro Micro）|
-| Webcam | 1 | 插電腦2，拍攝電腦1螢幕 |
+```text
+Computer 2 (Controller)
+  FastAPI :8000
+    |- KeyboardSerial 38400 -> Nano_KB -> SoftSerial -> Pro Micro Serial1 38400
+    |- ServoSerial 115200   -> Nano_SRV -> PWM -> Servo x6
+    |- Webcam -> frame buffer -> visual monitor
 
----
-
-## 接線
-
-```
-Nano_KB  D11 (TX) ──► Pro Micro RX1 (Pin 0)
-Nano_KB  D10 (RX) ◄── Pro Micro TX1 (Pin 1)
-Nano_KB  GND      ─── Pro Micro GND
-Nano_KB  USB      ──► 電腦2
-
-Pro Micro USB     ──► 電腦1（HID）
-
-Nano_SRV D9  → S1,  D10 → S2,  D11 → S3
-         D6  → S4,  D5  → S5,  D3  → S6
-Nano_SRV USB ──► 電腦2
+Computer 1 (Target)
+  Pro Micro USB HID keyboard + mouse receiver
 ```
 
 ---
 
-## 鮑率
+## Hardware
 
-| 連線段 | 鮑率 |
-|--------|------|
-| 電腦2 → Nano_KB USB | 38400 |
-| Nano_KB SoftSerial → Pro Micro Serial1 | 38400 |
-| Pro Micro Serial USB debug | 38400 |
-| 電腦2 → Nano_SRV USB | 115200 |
+- Arduino Pro Micro (ATmega32U4) x1
+- Arduino Nano (Nano_KB) x1
+- Arduino Nano (Nano_SRV) x1
+- SG90 servo x1~6
+- Webcam x1
+- USB cables x3
+- Dupont wires for Nano_KB <-> Pro Micro (TX/RX/GND)
 
 ---
 
-## 專案結構
+## Wiring
 
-```
-rks/
-├── README.md
-├── arduino/
-│   ├── nano_keyboard/nano_keyboard.ino   ← Nano_KB 橋接
-│   ├── pro_micro/pro_micro.ino           ← HID 鍵盤+滑鼠
-│   └── nano_servo/nano_servo.ino         ← Servo 控制
-├── server/
-│   ├── main.py                           ← FastAPI 主程式
-│   ├── keyboard_serial.py                ← KBM 串口 38400
-│   ├── servo_serial.py                   ← SRV 串口 115200
-│   ├── servo_router.py                   ← /srv/* 路由
-│   ├── requirements.txt
-│   └── static/
-│       ├── index.html                    ← 整合版 UI
-│       └── arch.html                     ← 架構圖 & MVP 計畫
-└── tools/
-  ├── test_promicro.py                  ← MVP Step 1
-  ├── test_nano_servo.py                ← MVP Step 2
-  ├── test_evt_flow.py                  ← EVT 腳本等待測試
-  └── send_event.ps1                    ← 被控端 PowerShell 事件來源
+```text
+Nano_KB D11 (TX) -> Pro Micro RX1 (Pin 0)
+Nano_KB D10 (RX) <- Pro Micro TX1 (Pin 1)
+Nano_KB GND      -- Pro Micro GND
+Nano_KB USB      -> Computer 2
+
+Pro Micro USB    -> Computer 1 (HID)
+
+Nano_SRV D9  -> S1
+Nano_SRV D10 -> S2
+Nano_SRV D11 -> S3
+Nano_SRV D6  -> S4
+Nano_SRV D5  -> S5
+Nano_SRV D3  -> S6
+Nano_SRV USB -> Computer 2
 ```
 
 ---
 
-## 安裝啟動
+## Baud Rates
+
+- PC2 <-> Nano_KB USB: 38400
+- Nano_KB SoftSerial <-> Pro Micro Serial1: 38400
+- Pro Micro USB debug serial: 38400
+- PC2 <-> Nano_SRV USB: 115200
+
+---
+
+## Project Structure
+
+```text
+remote-keyboard-system/
+├─ README.md
+├─ arduino/
+│  ├─ nano_keyboard/nano_keyboard.ino
+│  ├─ pro_micro/pro_micro.ino
+│  └─ nano_servo/nano_servo.ino
+├─ server/
+│  ├─ main.py
+│  ├─ keyboard_serial.py
+│  ├─ servo_serial.py
+│  ├─ servo_router.py
+│  ├─ requirements.txt
+│  ├─ build-exe.bat
+│  ├─ rks-server.spec
+│  └─ static/
+│     ├─ index.html
+│     ├─ arch.html
+│     └─ sw.js
+└─ tools/
+   ├─ test_promicro.py
+   ├─ test_nano_servo.py
+   ├─ test_evt_flow.py
+   ├─ send_event.ps1
+   └─ SerialMonitor.ps1
+```
+
+---
+
+## Run
 
 ```bash
-cd rks/server
+cd server
 pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-瀏覽器：`http://電腦2:8000`
-架構圖：`http://電腦2:8000/arch`
+Open:
 
-### Windows EXE 最小部署
+- UI: http://127.0.0.1:8000
+- Architecture page: http://127.0.0.1:8000/arch
 
-打包後可直接使用：
+### Optional Environment Variables
 
-- `server/dist/rks-server.exe`
-- `server/dist/start-rks-server.bat`
-
-建議部署步驟：
-
-1. 把 `rks-server.exe` 與 `start-rks-server.bat` 複製到實際機器同一個資料夾。
-2. 雙擊 `start-rks-server.bat` 啟動。
-3. 在同網段其他設備開啟 `http://<控制端IP>:8000`。
-
-可選環境變數（在啟動前設定）：
-
-- `HOST`（預設 `0.0.0.0`）
-- `PORT`（預設 `8000`）
-- `AUTO_CONNECT_SERIAL`（預設 `1`）
-- `CAMERA_INDEX`（預設 `0`）
-- `JPEG_QUALITY`（預設 `75`）
-
-#### 防火牆注意事項（Windows）
-
-第一次啟動若跳出防火牆提示，請允許 `rks-server.exe` 使用「私人網路」。
-
-若要手動加入規則（系統管理員 PowerShell）：
-
-```powershell
-New-NetFirewallRule -DisplayName "RKS Server 8000" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8000
-```
-
-#### Camera 注意事項
-
-- `rks-server.exe` 需獨占攝影機，請關閉其他占用相機的程式（Teams/Zoom/Camera App）。
-- Windows 隱私權設定需允許桌面應用程式使用相機。
-- 若畫面黑屏或錯誤，可改 `CAMERA_INDEX`（例如 `1`、`2`）後重啟。
-
-#### COM（SRV/KBM）注意事項
-
-- 預設 `AUTO_CONNECT_SERIAL=1`，啟動後會自動掃描並嘗試連接 SRV/KBM。
-- 若連到錯誤裝置，請在 UI 手動切換正確 COM port。
-- 請避免 Arduino IDE Serial Monitor 或其他工具同時占用同一個 COM port。
-- 建議在裝置管理員固定 COM 編號，降低重插後編號漂移造成的連線失敗。
+- `HOST` (default `0.0.0.0`)
+- `PORT` (default `8000`)
+- `AUTO_CONNECT_SERIAL` (default `1`)
+- `CAMERA_INDEX` (default `0`)
+- `CAMERA_WIDTH` (default `1280`)
+- `CAMERA_HEIGHT` (default `720`)
+- `JPEG_QUALITY` (default `75`)
+- `DEFAULT_EVT_TIMEOUT_MS` (default `30000`)
 
 ---
 
-## API 端點
+## Startup Flow (Current)
 
-| 方法 | 路徑 | 說明 |
-|------|------|------|
-| GET | `/` | 主介面 |
-| GET | `/arch` | 架構圖 |
-| GET | `/stream` | MJPEG 串流 |
-| GET | `/health` | 系統狀態（含 script.running） |
-| GET | `/kbm/api/ports` | KBM 可用串口 |
-| POST | `/kbm/api/connect` | `{"port":"COM3"}` |
-| POST | `/kbm/api/disconnect` | — |
-| POST | `/kbm/api/send` | `{"cmd":"TYPE:hello"}` |
-| WS | `/ws/kbm` | KBM 狀態 + 腳本進度推播 + EVT 事件 |
-| GET | `/srv/api/ports` | SRV 可用串口 |
-| POST | `/srv/api/connect` | `{"port":"COM4"}` |
-| POST | `/srv/api/disconnect` | — |
-| POST | `/srv/api/attach` | `{"sid":1,"pin":9}` |
-| POST | `/srv/api/detach` | `{"sid":1}` |
-| POST | `/srv/api/attach_all` | `{"servos":{"1":9,"2":10}}` |
-| POST | `/srv/api/detach_all` | — |
-| POST | `/srv/api/run` | SRV-only 腳本 |
-| POST | `/srv/api/stop` | 停止 Servo |
-| POST | `/srv/api/command` | 單步 Servo |
-| WS | `/ws/srv` | SRV 狀態推播 |
-| **POST** | **`/script/run`** | **混合腳本（SRV+KBD+MSE）** |
-| **POST** | **`/script/stop`** | **停止混合腳本** |
-| GET | `/script/status` | `{"running":true/false,"queued":0,"pending":{"total":0,"buckets":[]}}` |
+1. FastAPI starts
+2. Camera auto open by `CAMERA_INDEX`
+3. Background serial auto-probe for SRV and KBM
+4. Visual monitor task starts
+5. When camera + SRV + KBM are all ready, console logs:
+
+```text
+service ready for script input
+```
+
+### Typical Logs
+
+```text
+[INFO] main: Camera auto-started: index=0, Camera ready
+[INFO] servo_serial: SRV connected: COM18 @ 115200
+[INFO] keyboard_serial: KBM connected: COM10 @ 38400
+[INFO] main: service ready for script input
+```
 
 ---
 
-## 混合腳本 JSON 格式
+## Auto Detect Details
 
-Script Editor 的 **Export** 直接輸出此格式，可用 curl 執行：
+- SRV probing: 115200 `PING` expecting `OK PONG` / `OK READY` style responses
+- KBM probing: 38400, prefer Nano_KB startup banner detection (`[Nano_KB] Bridge ready...`), then fallback to `PING` roundtrip
+- If auto connect fails, UI manual connect is still available
 
-```bash
-# Windows PowerShell / CMD
-curl.exe -X POST http://127.0.0.1:8000/script/run ^
-  -H "Content-Type: application/json" ^
-  --data-binary "@exported_script.json"
+---
 
-# Linux / macOS
-curl -X POST http://127.0.0.1:8000/script/run \
-  -H "Content-Type: application/json" \
-  --data-binary "@exported_script.json"
-```
+## Core Runtime Concepts
 
-JSON 格式：
+### 1) Mixed Script Runner
+
+`/script/run` accepts mixed steps:
+
+- `srv`: servo action
+- `kbd`: keyboard action
+- `mse`: mouse action
+- `evt`: wait for event gate
+
+### 2) Event Bus + Pending Pool
+
+- If script starts with an event gate that is not available yet, script is held in pending pool bucket by event name
+- When event is emitted (from KBM `EVT:<name>` or visual trigger), pending scripts are released to queue
+
+### 3) Visual Monitor
+
+- Condition evaluates at about 3 fps
+- On match edge, emits `IMG.MATCH.<condition_id>`
+- Broadcasts visual events by websocket
+
+### 4) Auto Attach Servo in Script Mode
+
+- Before queueing/running scripts, required servo IDs are auto-attached if pin mapping exists
+- This also applies to scripts released later from pending pool
+
+---
+
+## Script JSON Formats
+
+### A. Basic Mixed Script
 
 ```json
 {
   "loop": false,
   "servos": { "1": 9, "2": 10 },
+  "attach_cmds": ["ATTACH 1 9", "ATTACH 2 10"],
   "steps": [
     {
       "type": "srv",
@@ -214,17 +204,9 @@ JSON 格式：
     },
     {
       "type": "kbd",
-      "delay_ms": 200,
-      "cmd_type": "COMBO",
-      "mod1": "CTRL",
-      "mod2": "",
-      "key": "C"
-    },
-    {
-      "type": "kbd",
       "delay_ms": 100,
-      "cmd_type": "TYPE",
-      "text": "hello world"
+      "cmd_type": "KEY",
+      "key": "F12"
     },
     {
       "type": "evt",
@@ -232,104 +214,196 @@ JSON 格式：
       "evt": "HELLO"
     },
     {
-      "type": "kbd",
-      "delay_ms": 0,
-      "cmd_type": "KEY",
-      "key": "ENTER"
-    },
-    {
-      "type": "mse",
-      "delay_ms": 100,
-      "action": "MOVE",
-      "x": 100,
-      "y": -50
-    },
-    {
       "type": "mse",
       "delay_ms": 50,
-      "action": "CLICK",
-      "btn": "L"
-    },
-    {
-      "type": "mse",
-      "delay_ms": 0,
-      "action": "SCROLL",
-      "amount": -3
+      "action": "MOVE",
+      "x": 10,
+      "y": 0
     }
   ]
 }
 ```
 
-也可以直接給 `cmd` 字串（KBD/MSE 都支援）：
+### B. Script Bundle (IMG Embedded)
+
+`/script/run` and `/script/import_bundle` both support this bundle format.
 
 ```json
-{ "type": "kbd", "delay_ms": 0, "cmd": "COMBO:CTRL+ALT+DELETE" }
-{ "type": "mse", "delay_ms": 0, "cmd": "MOUSE:CLICK L" }
-{ "type": "evt", "delay_ms": 0, "evt": "HELLO" }
+{
+  "schema_version": 2,
+  "loop": false,
+  "servos": { "1": 9 },
+  "attach_cmds": ["ATTACH 1 9"],
+  "steps": [
+    { "type": "evt", "delay_ms": 0, "evt": "IMG.MATCH.old-cond-id" },
+    { "type": "kbd", "delay_ms": 100, "cmd_type": "TYPE", "text": "done" }
+  ],
+  "img_bundle": {
+    "snapshots": [
+      {
+        "snapshot_id": "snap-old-1",
+        "jpeg_b64": "...base64 jpeg..."
+      }
+    ],
+    "conditions": [
+      {
+        "condition_id": "old-cond-id",
+        "name": "dialog-ready",
+        "snapshot_id": "snap-old-1",
+        "roi": [0.2, 0.3, 0.4, 0.2],
+        "threshold": 0.92,
+        "min_hits": 3,
+        "cooldown_ms": 3000
+      }
+    ]
+  }
+}
 ```
 
-### 停止執行中的腳本
+Bundle import behavior:
+
+- snapshot base64 is stored into snapshot pool
+- conditions are created and auto-armed
+- `IMG.MATCH.<old_id>` in steps is remapped to new imported IDs
+- websocket emits visual sync event
+- if camera is not running, server auto starts camera for IMG bundle import
+
+---
+
+## Curl Examples
+
+### Run script (basic or bundle)
 
 ```bash
-curl -X POST http://127.0.0.1:8000/script/stop
+curl.exe -X POST http://127.0.0.1:8000/script/run ^
+  -H "Content-Type: application/json" ^
+  --data-binary "@your_script.json"
 ```
 
-### 查詢腳本狀態
+### Stop script
 
 ```bash
-curl http://127.0.0.1:8000/script/status
-# {"running": true, "queued": 0, "pending": {"total": 1, "buckets": [{"evt":"HELLO","count":1}]}}
+curl.exe -X POST http://127.0.0.1:8000/script/stop
+```
+
+### Check script status
+
+```bash
+curl.exe http://127.0.0.1:8000/script/status
 ```
 
 ---
 
-## KBM 指令協議（38400 baud）
+## API Summary
 
-| 指令 | 說明 |
-|------|------|
-| `TYPE:<text>` | 輸入文字 |
-| `KEY:<name>` | ENTER ESC BACKSPACE TAB DELETE F1–F12 等 |
-| `DOWN:<mod>` | 按住 CTRL SHIFT ALT GUI |
-| `UP:<mod>` | 放開修飾鍵 |
-| `COMBO:<m>+<k>` | 組合鍵，例 `COMBO:CTRL+C` |
-| `RELEASEALL` | 釋放所有按鍵 |
-| `MOUSE:MOVE dx dy` | 相對移動 −127~127 |
-| `MOUSE:CLICK L/R/M` | 單擊 |啽
-| `MOUSE:DBLCLICK L` | 雙擊 |
-| `MOUSE:DOWN/UP L` | 按住/放開 |
-| `MOUSE:SCROLL n` | 滾輪，正=上 負=下 |
-| `PING` | 連線測試 |
-| `EVT:<name>` | 被控端回傳事件，供腳本等待條件使用 |
+### General
+
+- `GET /`
+- `GET /arch`
+- `GET /health`
+- `GET /stream`
+
+### Camera
+
+- `GET /camera/devices`
+- `POST /camera/start`
+- `POST /camera/stop`
+- `GET /camera/status`
+
+### KBM
+
+- `GET /kbm/api/ports`
+- `GET /kbm/api/status`
+- `POST /kbm/api/connect`
+- `POST /kbm/api/disconnect`
+- `POST /kbm/api/send`
+- `WS /ws/kbm`
+
+### SRV
+
+- `GET /srv/api/ports`
+- `GET /srv/api/status`
+- `POST /srv/api/connect`
+- `POST /srv/api/disconnect`
+- `POST /srv/api/attach`
+- `POST /srv/api/detach`
+- `POST /srv/api/attach_all`
+- `POST /srv/api/detach_all`
+- `POST /srv/api/run`
+- `POST /srv/api/stop`
+- `POST /srv/api/command`
+- `POST /srv/api/send`
+- `WS /ws/srv`
+
+### Mixed Script + Pool
+
+- `POST /script/run`
+- `POST /script/stop`
+- `POST /script/import_bundle`
+- `GET /script/status`
+- `GET /script/pool/{evt}`
+- `DELETE /script/pool/{evt}`
+- `POST /script/pool/{evt}/queue_now`
+
+### Visual
+
+- `POST /visual/snapshot`
+- `GET /visual/snapshots`
+- `DELETE /visual/snapshots/{snap_id}`
+- `POST /visual/conditions`
+- `GET /visual/conditions`
+- `PUT /visual/conditions/{cid}`
+- `DELETE /visual/conditions/{cid}`
+- `POST /visual/conditions/{cid}/arm`
+- `POST /visual/conditions/{cid}/disarm`
+- `POST /visual/conditions/{cid}/test`
 
 ---
 
-## 事件驅動腳本（EVT）
+## KBM Protocol (38400)
 
-當腳本中包含 `type: "evt"` 步驟時，後端會先把整份腳本放入 EVT Pending Pool（依事件名分桶），不會先進 runnable queue，也不會套用 timeout。
-
-當被控端回傳對應的 `EVT:<name>` 後，該事件桶中的腳本會被依序搬到 runnable queue，等目前任務完成後再接續執行，不會插隊打斷正在進行的任務。
-
-前端右側會顯示 `EVT Pool`，可看到每個事件名 bucket 的 pending 數量與首筆腳本摘要。
-
-建議事件格式：
-
-```text
-EVT:HELLO
-EVT:APP_READY
-EVT:WINDOW_FOUND|title=Setup
-```
+- `TYPE:<text>`
+- `KEY:<name>` (ENTER ESC BACKSPACE TAB DELETE F1~F12 ...)
+- `DOWN:<mod>` / `UP:<mod>` where mod in `CTRL SHIFT ALT GUI`
+- `COMBO:<m>+<k>`
+- `RELEASEALL`
+- `MOUSE:MOVE dx dy`
+- `MOUSE:CLICK L|R|M`
+- `MOUSE:DBLCLICK L|R|M`
+- `MOUSE:DOWN L|R|M`
+- `MOUSE:UP L|R|M`
+- `MOUSE:SCROLL n`
+- `PING`
+- `EVT:<name>`
 
 ---
 
-## MVP 驗證計畫
+## Troubleshooting
 
-詳細步驟見 `http://localhost:8000/arch` → MVP 驗證計畫 tab
+### Camera not available
 
-| Step | 說明 | 工具 |
-|------|------|------|
-| 1 | Pro Micro HID（via Nano_KB）| `python tools/test_promicro.py` |
-| 2 | Nano_KB 橋接 | Arduino Serial Monitor 38400 |
-| 3 | Nano_SRV Servo | `python tools/test_nano_servo.py` |
-| 4 | FastAPI 串口連線 | `GET /health` |
-| 5 | 完整端對端 + curl 腳本 | 網頁操作 + curl |
-| 6 | EVT 事件驅動腳本 | `python tools/test_evt_flow.py` + `powershell -ExecutionPolicy Bypass -File .\tools\send_event.ps1` |
+- Close Teams/Zoom/Camera app and retry
+- Check Windows camera privacy permissions
+- Try different `CAMERA_INDEX`
+- Use `GET /camera/devices` to inspect available indices
+
+### SRV/KBM no matched port
+
+- Ensure no other app is holding COM ports (Arduino Serial Monitor, etc.)
+- Replug device and confirm COM number in Device Manager
+- Use manual connect from UI if auto detect fails
+
+### Script stuck in pending
+
+- Check first `evt` step value
+- Emit corresponding `EVT:<name>` from target side
+- Inspect `GET /script/status` and `GET /script/pool/{evt}`
+
+---
+
+## Validation Tools
+
+- `python tools/test_promicro.py`
+- `python tools/test_nano_servo.py`
+- `python tools/test_evt_flow.py`
+- `powershell -ExecutionPolicy Bypass -File .\tools\send_event.ps1`

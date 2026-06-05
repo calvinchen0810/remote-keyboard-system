@@ -1,415 +1,436 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>RKS — Architecture</title>
+<title>RKS - Architecture</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0a0a0c;color:#e2e8f0;font-family:'Segoe UI',system-ui,sans-serif;padding:20px;min-height:100vh}
-h1{font-family:'Consolas',monospace;font-size:1.1rem;color:#22c55e;letter-spacing:2px;margin-bottom:4px}
-.subtitle{font-family:'Consolas',monospace;font-size:.75rem;color:#475569;margin-bottom:20px}
-.tabs{display:flex;gap:0;margin-bottom:20px;border-bottom:1px solid #2a2a38}
-.tab{font-family:'Consolas',monospace;font-size:.75rem;padding:7px 18px;cursor:pointer;
-  color:#475569;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .1s}
+h1{font-family:Consolas,monospace;font-size:1.08rem;color:#22c55e;letter-spacing:1.6px;margin-bottom:4px}
+.subtitle{font-family:Consolas,monospace;font-size:.74rem;color:#475569;margin-bottom:18px;line-height:1.45}
+.subtitle a{color:#64748b;text-decoration:none}
+.subtitle a:hover{color:#94a3b8}
+.tabs{display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid #2a2a38;flex-wrap:wrap}
+.tab{font-family:Consolas,monospace;font-size:.74rem;padding:8px 16px;cursor:pointer;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .12s}
 .tab:hover{color:#94a3b8}
 .tab.active{color:#22c55e;border-bottom-color:#22c55e}
-.panel{display:none}.panel.active{display:block}
-svg text{font-family:'Consolas','Courier New',monospace}
-table{border-collapse:collapse;font-family:'Consolas',monospace;font-size:.8rem}
-th,td{padding:5px 10px;border-bottom:1px solid #1a1a24;text-align:left}
-th{color:#475569;font-weight:normal;font-size:.7rem;letter-spacing:.5px;background:#0d0d10}
+.panel{display:none}
+.panel.active{display:block}
+.diagram-wrap{max-width:1120px;border:1px solid #1a1a24;border-radius:6px;background:#0d0d10;padding:10px;overflow:auto}
+svg{display:block;height:auto}
+svg text{font-family:Consolas,'Courier New',monospace}
+h3{font-family:Consolas,monospace;font-size:.8rem;letter-spacing:.9px;margin-bottom:10px}
+table{border-collapse:collapse;font-family:Consolas,monospace;font-size:.8rem;width:100%}
+th,td{padding:6px 10px;border-bottom:1px solid #1a1a24;text-align:left;vertical-align:top;line-height:1.45}
+th{color:#64748b;font-weight:normal;font-size:.71rem;letter-spacing:.4px;background:#0d0d10}
 tr:nth-child(even){background:#0d0d10}
-code{font-family:'Consolas',monospace;background:#1e1e26;padding:1px 5px;border-radius:3px;font-size:.8rem}
+code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-radius:3px;font-size:.8rem}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:22px;max-width:1120px}
+@media (max-width:980px){
+  .two-col{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
 <h1>RKS // REMOTE KEYBOARD SYSTEM</h1>
-<div class="subtitle">Architecture, Flow & MVP Reference — <a href="/" style="color:#475569">← back to UI</a></div>
+<div class="subtitle">Architecture, Runtime Flow, Protocol and Validation Plan - <a href="/">Back to UI</a></div>
 
 <div class="tabs">
-  <div class="tab active" onclick="show('arch',this)">電路架構</div>
-  <div class="tab" onclick="show('flow',this)">程式流程</div>
-  <div class="tab" onclick="show('proto',this)">Serial 協議</div>
-  <div class="tab" onclick="show('mvp',this)">MVP 驗證計畫</div>
+  <div class="tab active" onclick="show('arch',this)">Circuit Architecture</div>
+  <div class="tab" onclick="show('flow',this)">Runtime Flow</div>
+  <div class="tab" onclick="show('proto',this)">Serial Protocol</div>
+  <div class="tab" onclick="show('mvp',this)">MVP Validation Plan</div>
 </div>
 
-<!-- ══ TAB: ARCH ══ -->
 <div class="panel active" id="panel-arch">
-<!--
-  Layout plan:
-  Left  region  x=14..294   (280px wide): 電腦2 + FastAPI + Nano_SRV + Webcam + Servo + Browser
-  Right region  x=446..726  (280px wide): 電腦1 + Pro Micro + OS + Keyboard + Screen
+  <div class="diagram-wrap">
+    <svg width="1040" viewBox="0 0 760 610" aria-label="RKS architecture diagram">
+      <defs>
+        <marker id="a0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+        <marker id="ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+        <marker id="aa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+        <marker id="ap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
 
-  Nano_KB is placed BETWEEN the two regions (x=310..410) so its connection lines
-  to FastAPI (left) and Pro Micro (right) do NOT cross Nano_SRV or the Servo lines.
--->
-<svg width="100%" viewBox="0 0 740 600" style="max-width:960px;display:block">
-<defs>
-  <marker id="a0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-    <path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-  </marker>
-  <marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-    <path d="M2 1L8 5L2 9" fill="none" stroke="#22c55e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-  </marker>
-  <marker id="ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-    <path d="M2 1L8 5L2 9" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-  </marker>
-  <marker id="aa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-    <path d="M2 1L8 5L2 9" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-  </marker>
-  <marker id="ap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-    <path d="M2 1L8 5L2 9" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-  </marker>
-</defs>
+      <rect x="14" y="14" width="282" height="580" rx="10" fill="none" stroke="#1e2a3a" stroke-width="1" stroke-dasharray="6 3"/>
+      <text x="155" y="38" text-anchor="middle" fill="#22c55e" font-size="11" letter-spacing="1.6">Computer 2 (Controller)</text>
 
-<!-- ══ 電腦2 region ══ -->
-<rect x="14" y="14" width="282" height="568" rx="10" fill="none" stroke="#1e2a3a" stroke-width="1" stroke-dasharray="6 3"/>
-<text x="155" y="38" text-anchor="middle" fill="#22c55e" font-size="11" letter-spacing="2">電腦 2（控制端）</text>
+      <rect x="30" y="52" width="250" height="84" rx="6" fill="#111115" stroke="#2a2a38"/>
+      <text x="155" y="73" text-anchor="middle" fill="#94a3b8" font-size="10" letter-spacing="1">FastAPI :8000</text>
+      <text x="155" y="91" text-anchor="middle" fill="#475569" font-size="9">KeyboardSerial 38400 / ServoSerial 115200</text>
+      <text x="155" y="108" text-anchor="middle" fill="#475569" font-size="9">WS /ws/kbm, WS /ws/srv, Event Bus, /stream</text>
+      <text x="155" y="123" text-anchor="middle" fill="#475569" font-size="9">/script/run + visual bundle import pipeline</text>
 
-<!-- FastAPI -->
-<rect x="30" y="52" width="250" height="82" rx="6" fill="#111115" stroke="#2a2a38"/>
-<text x="155" y="72"  text-anchor="middle" fill="#94a3b8" font-size="10" letter-spacing="1">FastAPI :8000</text>
-<text x="155" y="90"  text-anchor="middle" fill="#475569" font-size="9">KeyboardSerial (38400) · ServoSerial (115200)</text>
-<text x="155" y="107" text-anchor="middle" fill="#475569" font-size="9">WS /ws/kbm · EVT bus · WS /ws/srv · GET /stream</text>
-<text x="155" y="122" text-anchor="middle" fill="#475569" font-size="9">POST /kbm/api/send · POST /srv/api/run</text>
+      <line x1="280" y1="93" x2="310" y2="93" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ab)"/>
+      <text x="282" y="88" fill="#38bdf8" font-size="8">USB 38400</text>
 
-<!-- USB label: FastAPI → Nano_SRV (goes right within PC2) -->
-<line x1="220" y1="134" x2="220" y2="162" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#aa)"/>
-<text x="226" y="153" fill="#f59e0b" font-size="8">USB 115200</text>
+      <line x1="220" y1="136" x2="220" y2="164" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#aa)"/>
+      <text x="226" y="154" fill="#f59e0b" font-size="8">USB 115200</text>
 
-<!-- USB label: FastAPI → Nano_KB (exits PC2 region to the right) -->
-<!-- We draw a line from FastAPI right edge, going to Nano_KB box -->
-<line x1="280" y1="93" x2="310" y2="93" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ab)"/>
-<text x="282" y="88" fill="#38bdf8" font-size="8">USB 38400</text>
+      <rect x="110" y="164" width="140" height="54" rx="6" fill="#111115" stroke="#2a2a38"/>
+      <text x="180" y="185" text-anchor="middle" fill="#f59e0b" font-size="10">Nano_SRV</text>
+      <text x="180" y="200" text-anchor="middle" fill="#475569" font-size="9">PWM D3/D5/D6/D9/D10/D11</text>
+      <text x="180" y="212" text-anchor="middle" fill="#475569" font-size="9">115200 baud</text>
 
-<!-- Nano_SRV — inside PC2, lower left area -->
-<rect x="110" y="162" width="140" height="54" rx="6" fill="#111115" stroke="#2a2a38"/>
-<text x="180" y="183" text-anchor="middle" fill="#f59e0b" font-size="10">Nano_SRV</text>
-<text x="180" y="199" text-anchor="middle" fill="#475569" font-size="9">PWM D3/5/6/9/10/11</text>
-<text x="180" y="211" text-anchor="middle" fill="#475569" font-size="9">115200 baud</text>
+      <rect x="30" y="238" width="250" height="36" rx="6" fill="#111115" stroke="#2a2a38"/>
+      <text x="155" y="260" text-anchor="middle" fill="#94a3b8" font-size="10">Webcam -> MJPEG /stream</text>
+      <line x1="60" y1="238" x2="60" y2="218" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#a0)"/>
 
-<!-- Webcam -->
-<rect x="30" y="236" width="250" height="34" rx="6" fill="#111115" stroke="#2a2a38"/>
-<text x="155" y="257" text-anchor="middle" fill="#94a3b8" font-size="10">Webcam  →  MJPEG  GET /stream</text>
-<!-- Webcam to FastAPI feedback line -->
-<line x1="60" y1="236" x2="60" y2="216" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#a0)"/>
+      <rect x="30" y="296" width="250" height="46" rx="6" fill="#111115" stroke="#3a3a50"/>
+      <text x="155" y="316" text-anchor="middle" fill="#f59e0b" font-size="10">SG90 Servo x6 (wire <= 30 cm)</text>
+      <text x="155" y="332" text-anchor="middle" fill="#475569" font-size="9">Physical key pressing on target keyboard</text>
 
-<!-- Servo -->
-<rect x="30" y="292" width="250" height="44" rx="6" fill="#111115" stroke="#3a3a50"/>
-<text x="155" y="312" text-anchor="middle" fill="#f59e0b" font-size="10">SG90 Servo × 6  (≤ 30cm 導線)</text>
-<text x="155" y="328" text-anchor="middle" fill="#475569" font-size="9">D3 D5 D6 D9 D10 D11</text>
-<!-- Nano_SRV PWM to Webcam row edge, then down to Servo -->
-<line x1="180" y1="216" x2="180" y2="236" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#aa)"/>
-<text x="186" y="230" fill="#f59e0b" font-size="8">PWM</text>
-<line x1="180" y1="270" x2="180" y2="292" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#aa)"/>
+      <line x1="180" y1="218" x2="180" y2="238" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#aa)"/>
+      <line x1="180" y1="274" x2="180" y2="296" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#aa)"/>
 
-<!-- Browser -->
-<rect x="30" y="358" width="250" height="56" rx="6" fill="#111115" stroke="#2a2a38"/>
-<text x="155" y="380" text-anchor="middle" fill="#94a3b8" font-size="10">瀏覽器（任何裝置）</text>
-<text x="155" y="397" text-anchor="middle" fill="#475569" font-size="9">http://電腦2:8000</text>
-<text x="155" y="412" text-anchor="middle" fill="#475569" font-size="9">虛擬鍵盤 · Servo · 混合腳本</text>
+      <rect x="30" y="362" width="250" height="58" rx="6" fill="#111115" stroke="#2a2a38"/>
+      <text x="155" y="383" text-anchor="middle" fill="#94a3b8" font-size="10">Browser Client (any device)</text>
+      <text x="155" y="399" text-anchor="middle" fill="#475569" font-size="9">http://Computer2:8000</text>
+      <text x="155" y="414" text-anchor="middle" fill="#475569" font-size="9">Virtual keyboard, servo panel, mixed scripts</text>
 
-<!-- Env / baud notes -->
-<rect x="30" y="430" width="250" height="82" rx="6" fill="#0d0d10" stroke="#1a1a24"/>
-<text x="40"  y="449" fill="#475569" font-size="9" letter-spacing="1">BAUD 說明</text>
-<text x="40"  y="466" fill="#38bdf8" font-size="8">電腦2 → Nano_KB USB Serial  : 38400</text>
-<text x="40"  y="481" fill="#38bdf8" font-size="8">Nano_KB SoftSerial → Pro Micro Serial1 : 38400</text>
-<text x="40"  y="496" fill="#f59e0b" font-size="8">電腦2 → Nano_SRV USB Serial : 115200</text>
-<text x="40"  y="511" fill="#94a3b8" font-size="8">Pro Micro Serial(USB debug)  : 38400</text>
+      <rect x="30" y="436" width="250" height="88" rx="6" fill="#0d0d10" stroke="#1a1a24"/>
+      <text x="40" y="455" fill="#64748b" font-size="9" letter-spacing=".8">Baud Summary</text>
+      <text x="40" y="472" fill="#38bdf8" font-size="8">PC2 -> Nano_KB USB serial: 38400</text>
+      <text x="40" y="487" fill="#38bdf8" font-size="8">Nano_KB SoftSerial -> Pro Micro Serial1: 38400</text>
+      <text x="40" y="502" fill="#f59e0b" font-size="8">PC2 -> Nano_SRV USB serial: 115200</text>
+      <text x="40" y="517" fill="#94a3b8" font-size="8">Pro Micro USB debug serial: 38400</text>
 
-<!-- ══ Nano_KB — BETWEEN the two regions ══ -->
-<rect x="308" y="66" width="112" height="56" rx="6" fill="#111115" stroke="#2a2a38"/>
-<text x="364" y="88"  text-anchor="middle" fill="#38bdf8" font-size="10">Nano_KB</text>
-<text x="364" y="103" text-anchor="middle" fill="#475569" font-size="9">SoftSerial D10/D11</text>
-<text x="364" y="115" text-anchor="middle" fill="#475569" font-size="9">38400 baud</text>
+      <rect x="308" y="66" width="112" height="56" rx="6" fill="#111115" stroke="#2a2a38"/>
+      <text x="364" y="88" text-anchor="middle" fill="#38bdf8" font-size="10">Nano_KB</text>
+      <text x="364" y="103" text-anchor="middle" fill="#475569" font-size="9">SoftSerial D10/D11</text>
+      <text x="364" y="115" text-anchor="middle" fill="#475569" font-size="9">38400 baud</text>
 
-<!-- Nano_KB SoftSerial TX/RX label -->
-<text x="364" y="144" text-anchor="middle" fill="#38bdf8" font-size="8">TX/RX 38400</text>
-<text x="364" y="156" text-anchor="middle" fill="#475569" font-size="8">D10/D11 ↔ TX1/RX1</text>
-<text x="364" y="168" text-anchor="middle" fill="#475569" font-size="8">GND ─── GND</text>
+      <text x="364" y="144" text-anchor="middle" fill="#38bdf8" font-size="8">TX/RX 38400</text>
+      <text x="364" y="156" text-anchor="middle" fill="#475569" font-size="8">D10/D11 <-> TX1/RX1</text>
+      <text x="364" y="168" text-anchor="middle" fill="#475569" font-size="8">GND shared</text>
 
-<!-- Nano_KB → Pro Micro arrow (right) -->
-<line x1="420" y1="94" x2="450" y2="94" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ab)"/>
+      <line x1="420" y1="94" x2="450" y2="94" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ab)"/>
 
-<!-- ══ 電腦1 region ══ -->
-<rect x="448" y="14" width="278" height="568" rx="10" fill="none" stroke="#1e3a4a" stroke-width="1" stroke-dasharray="6 3"/>
-<text x="587" y="38" text-anchor="middle" fill="#38bdf8" font-size="11" letter-spacing="2">電腦 1（被控端）</text>
+      <rect x="448" y="14" width="278" height="580" rx="10" fill="none" stroke="#1e3a4a" stroke-width="1" stroke-dasharray="6 3"/>
+      <text x="587" y="38" text-anchor="middle" fill="#38bdf8" font-size="11" letter-spacing="1.6">Computer 1 (Target)</text>
 
-<!-- Pro Micro on PC1 -->
-<rect x="464" y="52" width="246" height="70" rx="6" fill="#111115" stroke="#3a3a50"/>
-<text x="587" y="73"  text-anchor="middle" fill="#a78bfa" font-size="10">Pro Micro（插電腦1）</text>
-<text x="587" y="90"  text-anchor="middle" fill="#475569" font-size="9">Serial1 TX1/RX1 ← Nano_KB  (38400)</text>
-<text x="587" y="106" text-anchor="middle" fill="#475569" font-size="9">Serial USB debug / EVT agent ← 電腦1  (38400)</text>
+      <rect x="464" y="52" width="246" height="72" rx="6" fill="#111115" stroke="#3a3a50"/>
+      <text x="587" y="73" text-anchor="middle" fill="#a78bfa" font-size="10">Pro Micro (connected to Computer 1)</text>
+      <text x="587" y="90" text-anchor="middle" fill="#475569" font-size="9">Serial1 TX1/RX1 <- Nano_KB (38400)</text>
+      <text x="587" y="106" text-anchor="middle" fill="#475569" font-size="9">USB debug serial / optional EVT source</text>
 
-<!-- USB HID arrow: Pro Micro to OS -->
-<line x1="587" y1="122" x2="587" y2="148" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#ap)"/>
-<text x="593" y="140" fill="#a78bfa" font-size="8">USB HID</text>
+      <line x1="587" y1="124" x2="587" y2="150" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#ap)"/>
+      <text x="593" y="142" fill="#a78bfa" font-size="8">USB HID</text>
 
-<!-- OS box -->
-<rect x="464" y="148" width="246" height="74" rx="6" fill="#111115" stroke="#2a2a38"/>
-<text x="587" y="170" text-anchor="middle" fill="#94a3b8" font-size="10">OS / 應用程式</text>
-<text x="587" y="188" text-anchor="middle" fill="#475569" font-size="9">接收 HID 鍵盤輸入</text>
-<text x="587" y="205" text-anchor="middle" fill="#475569" font-size="9">接收 HID 滑鼠輸入</text>
-<text x="587" y="216" text-anchor="middle" fill="#475569" font-size="8">（電腦1 認為 Pro Micro 是普通 USB 鍵盤）</text>
+      <rect x="464" y="150" width="246" height="76" rx="6" fill="#111115" stroke="#2a2a38"/>
+      <text x="587" y="171" text-anchor="middle" fill="#94a3b8" font-size="10">OS / Applications</text>
+      <text x="587" y="189" text-anchor="middle" fill="#475569" font-size="9">Receives HID keyboard input</text>
+      <text x="587" y="206" text-anchor="middle" fill="#475569" font-size="9">Receives HID mouse input</text>
+      <text x="587" y="218" text-anchor="middle" fill="#475569" font-size="8">Looks like a normal USB keyboard/mouse device</text>
 
-<!-- Physical keyboard -->
-<rect x="464" y="242" width="246" height="54" rx="6" fill="#111115" stroke="#2a2a38"/>
-<text x="587" y="264" text-anchor="middle" fill="#94a3b8" font-size="10">電腦1 實體鍵盤</text>
-<text x="587" y="282" text-anchor="middle" fill="#f59e0b" font-size="9">Servo 實體按壓（≤30cm 導線）</text>
+      <rect x="464" y="246" width="246" height="56" rx="6" fill="#111115" stroke="#2a2a38"/>
+      <text x="587" y="267" text-anchor="middle" fill="#94a3b8" font-size="10">Physical keyboard on Computer 1</text>
+      <text x="587" y="285" text-anchor="middle" fill="#f59e0b" font-size="9">Servo can press keys physically</text>
 
-<!-- Screen -->
-<rect x="464" y="316" width="246" height="100" rx="6" fill="#111115" stroke="#2a2a38"/>
-<text x="587" y="338" text-anchor="middle" fill="#94a3b8" font-size="10">電腦1 螢幕</text>
-<rect x="478" y="348" width="218" height="56" rx="3" fill="none" stroke="#1a1a24"/>
-<text x="587" y="378" text-anchor="middle" fill="#1e3a4a" font-size="9">Webcam 拍攝目標（MJPEG 串流至電腦2）</text>
+      <rect x="464" y="322" width="246" height="102" rx="6" fill="#111115" stroke="#2a2a38"/>
+      <text x="587" y="344" text-anchor="middle" fill="#94a3b8" font-size="10">Computer 1 Screen</text>
+      <rect x="478" y="354" width="218" height="58" rx="3" fill="none" stroke="#1a1a24"/>
+      <text x="587" y="385" text-anchor="middle" fill="#475569" font-size="9">Webcam capture target for image match</text>
 
-<!-- Serial Monitor note -->
-<rect x="464" y="436" width="246" height="56" rx="6" fill="#0d0d10" stroke="#1a1a24"/>
-<text x="587" y="456" text-anchor="middle" fill="#475569" font-size="9">電腦1 Arduino IDE Serial Monitor</text>
-<text x="587" y="474" text-anchor="middle" fill="#475569" font-size="8">38400 baud — 可觀察 Pro Micro debug 輸出</text>
-<text x="587" y="488" text-anchor="middle" fill="#475569" font-size="8">（選填，不影響系統運作）</text>
+      <rect x="464" y="444" width="246" height="58" rx="6" fill="#0d0d10" stroke="#1a1a24"/>
+      <text x="587" y="464" text-anchor="middle" fill="#64748b" font-size="9">Computer 1 Arduino Serial Monitor (optional)</text>
+      <text x="587" y="481" text-anchor="middle" fill="#475569" font-size="8">38400 baud for Pro Micro debug messages</text>
+      <text x="587" y="495" text-anchor="middle" fill="#475569" font-size="8">Not required for normal operation</text>
 
-<!-- ══ Cross-region lines ══ -->
+      <path d="M155 342 Q155 568 464 272" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#aa)"/>
+      <text x="222" y="552" fill="#f59e0b" font-size="8">Dupont wire <= 30 cm</text>
 
-<!-- Servo wire: PC2 Servo box → PC1 physical keyboard (dashed amber, bottom arc) -->
-<path d="M155 336 Q155 560 464 268" fill="none" stroke="#f59e0b" stroke-width="1.5"
-      stroke-dasharray="6 3" marker-end="url(#aa)"/>
-<text x="220" y="545" fill="#f59e0b" font-size="8">≤ 30cm 杜邦線</text>
+      <path d="M155 274 Q155 590 464 374" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#a0)"/>
+      <text x="302" y="584" fill="#64748b" font-size="8">Webcam capture path</text>
 
-<!-- Webcam → PC1 screen (dashed grey) -->
-<path d="M155 270 Q155 580 464 368" fill="none" stroke="#94a3b8" stroke-width="1"
-      stroke-dasharray="4 3" marker-end="url(#a0)"/>
-<text x="300" y="575" fill="#475569" font-size="8">Webcam 拍攝</text>
-
-<!-- ══ Legend ══ -->
-<g transform="translate(14,538)">
-  <rect width="282" height="44" rx="4" fill="#0d0d10" stroke="#1a1a24"/>
-  <line x1="10" y1="16" x2="38" y2="16" stroke="#a78bfa" stroke-width="2"/>
-  <text x="43" y="19" fill="#a78bfa" font-size="8">KBM USB/HID</text>
-  <line x1="110" y1="16" x2="138" y2="16" stroke="#f59e0b" stroke-width="2"/>
-  <text x="143" y="19" fill="#f59e0b" font-size="8">SRV USB/PWM</text>
-  <line x1="200" y1="16" x2="228" y2="16" stroke="#38bdf8" stroke-width="2"/>
-  <text x="233" y="19" fill="#38bdf8" font-size="8">KBM serial</text>
-  <line x1="10"  y1="34" x2="38" y2="34" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5 3"/>
-  <text x="43" y="37" fill="#f59e0b" font-size="8">Servo 導線</text>
-  <line x1="110" y1="34" x2="138" y2="34" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="143" y="37" fill="#94a3b8" font-size="8">Webcam</text>
-  <line x1="200" y1="34" x2="228" y2="34" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2"/>
-  <text x="233" y="37" fill="#475569" font-size="8">feedback</text>
-</g>
-</svg>
+      <g transform="translate(14,540)">
+        <rect width="282" height="50" rx="4" fill="#0d0d10" stroke="#1a1a24"/>
+        <line x1="10" y1="17" x2="38" y2="17" stroke="#a78bfa" stroke-width="2"/>
+        <text x="43" y="20" fill="#a78bfa" font-size="8">KBM USB/HID</text>
+        <line x1="110" y1="17" x2="138" y2="17" stroke="#f59e0b" stroke-width="2"/>
+        <text x="143" y="20" fill="#f59e0b" font-size="8">SRV USB/PWM</text>
+        <line x1="200" y1="17" x2="228" y2="17" stroke="#38bdf8" stroke-width="2"/>
+        <text x="233" y="20" fill="#38bdf8" font-size="8">KBM serial</text>
+        <line x1="10" y1="36" x2="38" y2="36" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5 3"/>
+        <text x="43" y="39" fill="#f59e0b" font-size="8">Servo wire</text>
+        <line x1="110" y1="36" x2="138" y2="36" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="143" y="39" fill="#94a3b8" font-size="8">Webcam</text>
+        <line x1="200" y1="36" x2="228" y2="36" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2"/>
+        <text x="233" y="39" fill="#64748b" font-size="8">Feedback</text>
+      </g>
+    </svg>
+  </div>
 </div>
 
-<!-- ══ TAB: FLOW ══ -->
 <div class="panel" id="panel-flow">
-<svg width="100%" viewBox="0 0 780 520" style="max-width:960px;display:block">
-<defs>
-  <marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-    <path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-  </marker>
-</defs>
-<text x="100" y="20" text-anchor="middle" fill="#38bdf8" font-size="10" letter-spacing="1">KBM 按鍵流程</text>
-<text x="390" y="20" text-anchor="middle" fill="#f59e0b" font-size="10" letter-spacing="1">SRV Servo 流程</text>
-<text x="660" y="20" text-anchor="middle" fill="#22c55e" font-size="10" letter-spacing="1">混合腳本流程（前端JS）</text>
+  <div class="diagram-wrap">
+    <svg width="1100" viewBox="0 0 860 540" aria-label="RKS runtime flow diagram">
+      <defs>
+        <marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
 
-<!-- KBM column -->
-<rect x="20"  y="34"  width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="55"  text-anchor="middle" fill="#94a3b8" font-size="9">瀏覽器 click / textarea</text>
-<line x1="100" y1="68"  x2="100" y2="86"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="20"  y="86"  width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="107" text-anchor="middle" fill="#94a3b8" font-size="9">POST /kbm/api/send</text>
-<line x1="100" y1="120" x2="100" y2="138" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="20"  y="138" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="155" text-anchor="middle" fill="#38bdf8" font-size="9">KeyboardSerial.send()</text><text x="100" y="166" text-anchor="middle" fill="#475569" font-size="8">pyserial 38400</text>
-<line x1="100" y1="172" x2="100" y2="190" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="20"  y="190" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="207" text-anchor="middle" fill="#38bdf8" font-size="9">Nano_KB USB Serial</text><text x="100" y="218" text-anchor="middle" fill="#475569" font-size="8">SoftSerial D10/D11</text>
-<line x1="100" y1="224" x2="100" y2="242" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="20"  y="242" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="259" text-anchor="middle" fill="#38bdf8" font-size="9">Pro Micro Serial1</text><text x="100" y="270" text-anchor="middle" fill="#475569" font-size="8">TX1/RX1 38400</text>
-<line x1="100" y1="276" x2="100" y2="294" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="20"  y="294" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="311" text-anchor="middle" fill="#a78bfa" font-size="9">processCommand()</text>
-<line x1="100" y1="328" x2="100" y2="346" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="20"  y="346" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="363" text-anchor="middle" fill="#22c55e" font-size="9">Keyboard / Mouse HID</text><text x="100" y="374" text-anchor="middle" fill="#475569" font-size="8">USB HID → 電腦1</text>
-<line x1="100" y1="380" x2="100" y2="398" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="20"  y="398" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="100" y="413" text-anchor="middle" fill="#475569" font-size="9">Serial1.println("OK")</text><text x="100" y="424" text-anchor="middle" fill="#475569" font-size="8">ACK → WS broadcast</text>
+      <text x="100" y="20" text-anchor="middle" fill="#38bdf8" font-size="10" letter-spacing="1">KBM Input Path</text>
+      <text x="390" y="20" text-anchor="middle" fill="#f59e0b" font-size="10" letter-spacing="1">Servo Path</text>
+      <text x="700" y="20" text-anchor="middle" fill="#22c55e" font-size="10" letter-spacing="1">Mixed Script Runtime</text>
 
-<!-- SRV column -->
-<rect x="310" y="34"  width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="390" y="55"  text-anchor="middle" fill="#94a3b8" font-size="9">POST /srv/api/run</text>
-<line x1="390" y1="68"  x2="390" y2="86"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="310" y="86"  width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="390" y="103" text-anchor="middle" fill="#f59e0b" font-size="9">ServoSerial.send_script()</text><text x="390" y="114" text-anchor="middle" fill="#475569" font-size="8">pyserial 115200</text>
-<line x1="390" y1="120" x2="390" y2="138" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="310" y="138" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="390" y="155" text-anchor="middle" fill="#f59e0b" font-size="9">Nano_SRV USB Serial</text><text x="390" y="166" text-anchor="middle" fill="#475569" font-size="8">BEGIN/STEP.../END</text>
-<line x1="390" y1="172" x2="390" y2="190" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="310" y="190" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="390" y="207" text-anchor="middle" fill="#f59e0b" font-size="9">execStep()</text>
-<line x1="390" y1="224" x2="390" y2="242" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="310" y="242" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="390" y="259" text-anchor="middle" fill="#22c55e" font-size="9">Servo.write(angle)</text><text x="390" y="270" text-anchor="middle" fill="#475569" font-size="8">moveServo() blocking</text>
-<line x1="390" y1="276" x2="390" y2="294" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="310" y="294" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="390" y="311" text-anchor="middle" fill="#475569" font-size="9">OK RUNNING n/total</text><text x="390" y="322" text-anchor="middle" fill="#475569" font-size="8">→ WS /ws/srv broadcast</text>
+      <rect x="20" y="34" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="55" text-anchor="middle" fill="#94a3b8" font-size="9">Browser click / textarea</text>
+      <line x1="100" y1="68" x2="100" y2="86" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="20" y="86" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="107" text-anchor="middle" fill="#94a3b8" font-size="9">POST /kbm/api/send</text>
+      <line x1="100" y1="120" x2="100" y2="138" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="20" y="138" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="155" text-anchor="middle" fill="#38bdf8" font-size="9">KeyboardSerial.send()</text><text x="100" y="166" text-anchor="middle" fill="#64748b" font-size="8">pyserial 38400</text>
+      <line x1="100" y1="172" x2="100" y2="190" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="20" y="190" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="207" text-anchor="middle" fill="#38bdf8" font-size="9">Nano_KB USB serial</text><text x="100" y="218" text-anchor="middle" fill="#64748b" font-size="8">SoftSerial D10/D11</text>
+      <line x1="100" y1="224" x2="100" y2="242" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="20" y="242" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="259" text-anchor="middle" fill="#38bdf8" font-size="9">Pro Micro Serial1</text><text x="100" y="270" text-anchor="middle" fill="#64748b" font-size="8">TX1/RX1 38400</text>
+      <line x1="100" y1="276" x2="100" y2="294" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="20" y="294" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="311" text-anchor="middle" fill="#a78bfa" font-size="9">processCommand()</text>
+      <line x1="100" y1="328" x2="100" y2="346" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="20" y="346" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="100" y="363" text-anchor="middle" fill="#22c55e" font-size="9">Keyboard / Mouse HID</text><text x="100" y="374" text-anchor="middle" fill="#64748b" font-size="8">USB HID to Computer 1</text>
+      <line x1="100" y1="380" x2="100" y2="398" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="20" y="398" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="100" y="414" text-anchor="middle" fill="#64748b" font-size="9">ACK return to backend</text><text x="100" y="425" text-anchor="middle" fill="#64748b" font-size="8">broadcast by websocket</text>
 
-<!-- Mixed script column -->
-<rect x="580" y="34"  width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="660" y="55"  text-anchor="middle" fill="#94a3b8" font-size="9">▶ RUN（混合腳本）</text>
-<line x1="660" y1="68"  x2="660" y2="86"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="580" y="86"  width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="660" y="100" text-anchor="middle" fill="#94a3b8" font-size="9">for each step</text><text x="660" y="112" text-anchor="middle" fill="#475569" font-size="8">if evt -> wait bus, then delay</text>
-<line x1="660" y1="120" x2="660" y2="138" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<polygon points="660,138 720,163 660,188 600,163" fill="none" stroke="#2a2a38"/>
-<text x="660" y="166" text-anchor="middle" fill="#94a3b8" font-size="9">type?</text>
-<line x1="600" y1="163" x2="562" y2="163" stroke="#94a3b8" stroke-width="1.5"/>
-<line x1="562" y1="163" x2="562" y2="210" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<text x="564" y="157" fill="#a78bfa" font-size="8">kbd/mse</text>
-<rect x="516" y="210" width="92" height="30" rx="3" fill="#111115" stroke="#3a3a50"/><text x="562" y="229" text-anchor="middle" fill="#a78bfa" font-size="8">/kbm/api/send</text>
-<line x1="720" y1="163" x2="756" y2="163" stroke="#94a3b8" stroke-width="1.5"/>
-<line x1="756" y1="163" x2="756" y2="210" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<text x="724" y="157" fill="#f59e0b" font-size="8">srv</text>
-<rect x="710" y="210" width="92" height="30" rx="3" fill="#111115" stroke="#3a3a50"/><text x="756" y="229" text-anchor="middle" fill="#f59e0b" font-size="8">/srv/api/command</text>
-<line x1="562" y1="240" x2="562" y2="270" stroke="#94a3b8" stroke-width="1"/>
-<line x1="756" y1="240" x2="756" y2="270" stroke="#94a3b8" stroke-width="1"/>
-<line x1="562" y1="270" x2="756" y2="270" stroke="#94a3b8" stroke-width=".5"/>
-<line x1="660" y1="270" x2="660" y2="288" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="580" y="288" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="660" y="305" text-anchor="middle" fill="#94a3b8" font-size="9">進度更新</text><text x="660" y="316" text-anchor="middle" fill="#475569" font-size="8">setProgress(i+1, total)</text>
-<line x1="660" y1="322" x2="660" y2="340" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-<rect x="580" y="340" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="660" y="360" text-anchor="middle" fill="#22c55e" font-size="9">全部完成</text><text x="660" y="371" text-anchor="middle" fill="#475569" font-size="8">setProgMsg("✔ done")</text>
-</svg>
+      <rect x="310" y="34" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="390" y="55" text-anchor="middle" fill="#94a3b8" font-size="9">POST /srv/api/run</text>
+      <line x1="390" y1="68" x2="390" y2="86" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="310" y="86" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="390" y="103" text-anchor="middle" fill="#f59e0b" font-size="9">ServoSerial.send_script()</text><text x="390" y="114" text-anchor="middle" fill="#64748b" font-size="8">pyserial 115200</text>
+      <line x1="390" y1="120" x2="390" y2="138" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="310" y="138" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="390" y="155" text-anchor="middle" fill="#f59e0b" font-size="9">Nano_SRV USB serial</text><text x="390" y="166" text-anchor="middle" fill="#64748b" font-size="8">BEGIN/STEP.../END</text>
+      <line x1="390" y1="172" x2="390" y2="190" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="310" y="190" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="390" y="207" text-anchor="middle" fill="#f59e0b" font-size="9">execStep()</text>
+      <line x1="390" y1="224" x2="390" y2="242" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="310" y="242" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="390" y="259" text-anchor="middle" fill="#22c55e" font-size="9">Servo.write(angle)</text><text x="390" y="270" text-anchor="middle" fill="#64748b" font-size="8">blocking move + hold</text>
+      <line x1="390" y1="276" x2="390" y2="294" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="310" y="294" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="390" y="311" text-anchor="middle" fill="#64748b" font-size="9">OK RUNNING n/total</text><text x="390" y="322" text-anchor="middle" fill="#64748b" font-size="8">websocket status update</text>
+
+      <rect x="620" y="34" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="700" y="55" text-anchor="middle" fill="#94a3b8" font-size="9">Run mixed script</text>
+      <line x1="700" y1="68" x2="700" y2="86" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="620" y="86" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="700" y="101" text-anchor="middle" fill="#94a3b8" font-size="9">For each step</text><text x="700" y="113" text-anchor="middle" fill="#64748b" font-size="8">evt wait -> delay -> dispatch</text>
+      <line x1="700" y1="120" x2="700" y2="138" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <polygon points="700,138 760,163 700,188 640,163" fill="none" stroke="#2a2a38"/>
+      <text x="700" y="166" text-anchor="middle" fill="#94a3b8" font-size="9">Step type?</text>
+
+      <line x1="640" y1="163" x2="600" y2="163" stroke="#94a3b8" stroke-width="1.5"/>
+      <line x1="600" y1="163" x2="600" y2="210" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <text x="605" y="156" fill="#a78bfa" font-size="8">kbd/mse</text>
+      <rect x="554" y="210" width="92" height="30" rx="3" fill="#111115" stroke="#3a3a50"/><text x="600" y="229" text-anchor="middle" fill="#a78bfa" font-size="8">/kbm/api/send</text>
+
+      <line x1="760" y1="163" x2="800" y2="163" stroke="#94a3b8" stroke-width="1.5"/>
+      <line x1="800" y1="163" x2="800" y2="210" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <text x="764" y="156" fill="#f59e0b" font-size="8">srv</text>
+      <rect x="754" y="210" width="92" height="30" rx="3" fill="#111115" stroke="#3a3a50"/><text x="800" y="229" text-anchor="middle" fill="#f59e0b" font-size="8">/srv/api/command</text>
+
+      <line x1="600" y1="240" x2="600" y2="270" stroke="#94a3b8" stroke-width="1"/>
+      <line x1="800" y1="240" x2="800" y2="270" stroke="#94a3b8" stroke-width="1"/>
+      <line x1="600" y1="270" x2="800" y2="270" stroke="#94a3b8" stroke-width=".6"/>
+      <line x1="700" y1="270" x2="700" y2="288" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+
+      <rect x="620" y="288" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="700" y="306" text-anchor="middle" fill="#94a3b8" font-size="9">Progress update</text><text x="700" y="317" text-anchor="middle" fill="#64748b" font-size="8">step i / total</text>
+      <line x1="700" y1="322" x2="700" y2="340" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
+      <rect x="620" y="340" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="700" y="359" text-anchor="middle" fill="#22c55e" font-size="9">Completed</text><text x="700" y="371" text-anchor="middle" fill="#64748b" font-size="8">done status broadcast</text>
+    </svg>
+  </div>
 </div>
 
-<!-- ══ TAB: PROTO ══ -->
 <div class="panel" id="panel-proto">
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;max-width:960px">
-<div>
-  <h3 style="font-family:Consolas,monospace;font-size:.8rem;color:#38bdf8;letter-spacing:1px;margin-bottom:10px">
-    // KBM 協議 — 38400 baud<br>
-    <span style="color:#475569;font-size:.7rem">電腦2 → Nano_KB USB → SoftSerial → Pro Micro Serial1</span>
-  </h3>
-  <table style="width:100%">
-    <thead><tr><th>指令</th><th>範例</th><th>說明</th></tr></thead>
-    <tbody id="kbm-tb"></tbody>
-  </table>
-  <div style="margin-top:10px;font-family:Consolas,monospace;font-size:.75rem;color:#475569">
-    每個指令以 <code>\n</code> 結尾&nbsp;&nbsp;回應：<code style="color:#22c55e">OK</code> 或 <code style="color:#ef4444">ERR</code>
+  <div class="two-col">
+    <div>
+      <h3 style="color:#38bdf8">
+        // KBM Protocol - 38400 baud<br>
+        <span style="color:#64748b;font-size:.7rem">Computer 2 -> Nano_KB USB -> SoftSerial -> Pro Micro Serial1</span>
+      </h3>
+      <table>
+        <thead><tr><th>Command</th><th>Example</th><th>Description</th></tr></thead>
+        <tbody id="kbm-tb"></tbody>
+      </table>
+      <div style="margin-top:10px;font-family:Consolas,monospace;font-size:.75rem;color:#64748b;line-height:1.5">
+        Each command ends with <code>\n</code> and expects <code style="color:#22c55e">OK</code> or <code style="color:#ef4444">ERR</code>
+      </div>
+    </div>
+
+    <div>
+      <h3 style="color:#f59e0b">
+        // SRV Protocol - 115200 baud<br>
+        <span style="color:#64748b;font-size:.7rem">Computer 2 -> Nano_SRV USB serial</span>
+      </h3>
+      <table>
+        <thead><tr><th>Command</th><th>Example</th><th>Description</th></tr></thead>
+        <tbody id="srv-tb"></tbody>
+      </table>
+      <div style="margin-top:10px;font-family:Consolas,monospace;font-size:.75rem;color:#64748b;line-height:1.5">
+        This protocol follows the original auto-clicker command style.
+      </div>
+    </div>
   </div>
-</div>
-<div>
-  <h3 style="font-family:Consolas,monospace;font-size:.8rem;color:#f59e0b;letter-spacing:1px;margin-bottom:10px">
-    // SRV 協議 — 115200 baud<br>
-    <span style="color:#475569;font-size:.7rem">電腦2 → Nano_SRV USB Serial</span>
-  </h3>
-  <table style="width:100%">
-    <thead><tr><th>指令</th><th>範例</th><th>說明</th></tr></thead>
-    <tbody id="srv-tb"></tbody>
-  </table>
-  <div style="margin-top:10px;font-family:Consolas,monospace;font-size:.75rem;color:#475569">
-    協議沿用 <a href="https://github.com/calvinchen0810/auto-clicker" style="color:#475569">auto-clicker</a>，未修改
-  </div>
-</div>
-</div>
 </div>
 
-<!-- ══ TAB: MVP ══ -->
 <div class="panel" id="panel-mvp">
-<div id="mvp-container" style="max-width:960px"></div>
+  <div id="mvp-container" style="max-width:1120px"></div>
 </div>
 
 <script>
-function show(id,el){
-  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-  document.getElementById('panel-'+id).classList.add('active');
+function show(id, el) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
   el.classList.add('active');
 }
 
-const kbmRows=[
-  ['TYPE:&lt;text&gt;',    'TYPE:hello',              '輸入任意文字'],
-  ['KEY:&lt;name&gt;',     'KEY:ENTER',               'ENTER ESC BACKSPACE TAB DELETE UP DOWN LEFT RIGHT HOME END PAGEUP PAGEDOWN F1–F12 等'],
-  ['DOWN:&lt;mod&gt;',    'DOWN:CTRL',               '按住 CTRL SHIFT ALT GUI'],
-  ['UP:&lt;mod&gt;',      'UP:CTRL',                 '放開修飾鍵'],
-  ['COMBO:m+m+k',         'COMBO:CTRL+ALT+DELETE',   '組合鍵，自動 releaseAll'],
-  ['RELEASEALL',           '—',                       '釋放所有按住的鍵'],
-  ['MOUSE:MOVE dx dy',    'MOUSE:MOVE 50 -30',        '相對移動 −127 ~ 127'],
-  ['MOUSE:CLICK L/R/M',   'MOUSE:CLICK L',            '單擊左/右/中鍵'],
-  ['MOUSE:DBLCLICK L',    'MOUSE:DBLCLICK L',         '雙擊'],
-  ['MOUSE:DOWN/UP L',     'MOUSE:DOWN L',             '按住/放開滑鼠鍵'],
-  ['MOUSE:SCROLL n',      'MOUSE:SCROLL -3',          '滾輪，正=上 負=下'],
-  ['PING',                '—',                        '連線測試，回 OK PONG'],
-  ['EVT:<name>',          'EVT:HELLO',               '被控端事件，供腳本等待條件使用'],
+const kbmRows = [
+  ['TYPE:<text>', 'TYPE:hello', 'Type arbitrary text'],
+  ['KEY:<name>', 'KEY:ENTER', 'Special key. Supports ENTER ESC BACKSPACE TAB DELETE UP DOWN LEFT RIGHT HOME END PAGEUP PAGEDOWN F1-F12'],
+  ['DOWN:<mod>', 'DOWN:CTRL', 'Hold modifier key: CTRL SHIFT ALT GUI'],
+  ['UP:<mod>', 'UP:CTRL', 'Release modifier key'],
+  ['COMBO:m+m+k', 'COMBO:CTRL+ALT+DELETE', 'Combination key, auto release all'],
+  ['RELEASEALL', '-', 'Release all pressed keys'],
+  ['MOUSE:MOVE dx dy', 'MOUSE:MOVE 50 -30', 'Relative move, range -127 to 127'],
+  ['MOUSE:CLICK L/R/M', 'MOUSE:CLICK L', 'Single click left/right/middle'],
+  ['MOUSE:DBLCLICK L', 'MOUSE:DBLCLICK L', 'Double click'],
+  ['MOUSE:DOWN/UP L', 'MOUSE:DOWN L', 'Mouse button hold/release'],
+  ['MOUSE:SCROLL n', 'MOUSE:SCROLL -3', 'Wheel scroll, positive up negative down'],
+  ['PING', '-', 'Connection test, returns OK PONG'],
+  ['EVT:<name>', 'EVT:HELLO', 'Event emitted from target side for script gates']
 ];
-const srvRows=[
-  ['ATTACH sid pin',      'ATTACH 1 9',               '掛載 Servo sid 到腳位 pin'],
-  ['DETACH sid',          'DETACH 1',                 '卸載 Servo'],
-  ['BEGIN n',             'BEGIN 3',                  '開始接收 n 個步驟'],
-  ['STEP d s a sp h ho',  'STEP 0 1 90 60 300 1',     'delay sid angle speed hold home'],
-  ['END',                 '—',                        '步驟接收完畢，開始執行'],
-  ['LOOP 0/1',            'LOOP 1',                   '設定是否迴圈'],
-  ['STOP',                '—',                        '立即停止並歸位'],
-  ['STATUS',              '—',                        '查詢目前狀態'],
-  ['PING',                '—',                        '連線測試'],
+
+const srvRows = [
+  ['ATTACH sid pin', 'ATTACH 1 9', 'Attach servo sid to pin'],
+  ['DETACH sid', 'DETACH 1', 'Detach servo'],
+  ['BEGIN n', 'BEGIN 3', 'Start receiving n steps'],
+  ['STEP d s a sp h ho', 'STEP 0 1 90 60 300 1', 'delay sid angle speed hold home'],
+  ['END', '-', 'End script input and start execution'],
+  ['LOOP 0/1', 'LOOP 1', 'Set script looping mode'],
+  ['STOP', '-', 'Stop immediately and return to safe state'],
+  ['STATUS', '-', 'Query current state'],
+  ['PING', '-', 'Connection test']
 ];
-function buildTable(rows,tbodyId,color){
-  const tb=document.getElementById(tbodyId);
-  rows.forEach(([cmd,ex,desc])=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td style="color:${color};white-space:nowrap">${cmd}</td>
+
+function buildTable(rows, tbodyId, color) {
+  const tb = document.getElementById(tbodyId);
+  rows.forEach(([cmd, ex, desc]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="color:${color};white-space:nowrap">${cmd}</td>
       <td style="color:#94a3b8;white-space:nowrap"><code>${ex}</code></td>
-      <td style="color:#475569;font-size:.75rem">${desc}</td>`;
+      <td style="color:#64748b;font-size:.75rem">${desc}</td>`;
     tb.appendChild(tr);
   });
 }
-buildTable(kbmRows,'kbm-tb','#38bdf8');
-buildTable(srvRows,'srv-tb','#f59e0b');
 
-const mvpSteps=[
-  {n:1,color:'#a78bfa',title:'Pro Micro HID 功能驗證',desc:'確認 Pro Micro Serial1 接收指令並正確輸出 HID',
-   prereq:'Pro Micro 燒錄完畢插電腦1，Nano_KB 燒錄完畢插電腦2，TX/RX 線接好，GND 共地，電腦1 開啟記事本。',
-   steps:['修改 <code>tools/test_promicro.py</code> 的 <code>PORT</code> 為 Nano_KB 在電腦2的 COM port',
-     '執行：<code>python tools/test_promicro.py</code>',
-     '預期：電腦1 記事本出現 <code>Hello RKS</code>，滑鼠移動，左鍵點擊',
-     '預期：腳本印出所有測試 ✓'],
-   tip:'若想先單獨測試 Pro Micro，可用電腦1 Arduino IDE Serial Monitor（38400）直接輸入 TYPE:test。'},
-  {n:2,color:'#38bdf8',title:'Nano_KB 橋接功能驗證',desc:'確認 Nano_KB 能正確轉發指令到 Pro Micro 並回傳 ACK',
-   prereq:'Nano_KB ↔ Pro Micro TX/RX 接好，GND 共地，電腦1 記事本開啟。',
-   steps:['電腦2 Arduino IDE → Nano_KB COM port → Serial Monitor（38400，換行：Newline）',
-     '輸入 <code>TYPE:bridge test</code>，預期電腦1 出現文字，Serial Monitor 收到 <code>OK</code>',
-     '輸入 <code>COMBO:CTRL+A</code>，預期電腦1 全選',
-     '輸入 <code>KEY:DELETE</code>，預期文字刪除',
-     '輸入 <code>PING</code>，預期回 <code>OK PONG</code>'],
-   tip:'Serial Monitor 換行設定要選 Newline，不是 No line ending。'},
-  {n:3,color:'#f59e0b',title:'Nano_SRV Servo 功能驗證',desc:'確認 Nano_SRV 能正確控制 Servo',
-   prereq:'Nano_SRV 燒錄完畢，SG90 接在 D9。',
-   steps:['修改 <code>tools/test_nano_servo.py</code> 的 <code>PORT</code> 為 Nano_SRV COM port',
-     '執行：<code>python tools/test_nano_servo.py</code>',
-     '預期：Servo 旋轉到 90° 停留後歸位',
-     '預期：腳本印出所有測試 ✓（含 OK DONE）'],tip:''},
-  {n:4,color:'#22c55e',title:'FastAPI 串口連線驗證',desc:'確認 FastAPI 可連上兩個 Nano 並透過 WebSocket 推播狀態',
-   prereq:'兩個 Nano 都插在電腦2，server 已啟動。',
-   steps:['啟動：<code>uvicorn main:app --reload</code>',
-     '瀏覽器開 <code>http://localhost:8000</code>',
-     'KBM 選 Nano_KB COM port → CONNECT，確認 LED 變綠',
-     'SRV 選 Nano_SRV COM port → CONNECT，確認 LED 變綠',
-     '查看 SRV/KBM Serial Monitor tab，確認顯示 WS connected',
-     '開 <code>/health</code>，確認 kbm.connected 和 srv.connected 都是 true'],tip:''},
-  {n:5,color:'#38bdf8',title:'完整端對端驗證',desc:'確認完整鏈路從網頁到電腦1 鍵盤/Servo',
-   prereq:'步驟 1–4 全部通過。',
-   steps:['Text Input 輸入 <code>hello end-to-end</code> 按 Enter，確認電腦1 出現文字',
-     '點 CTRL+C 快捷鍵，確認 KBM log 顯示 OK',
-     '展開 keyboard overlay，點幾個鍵，確認電腦1 有輸入',
-     'ATTACH S1，Single Step 送出 angle=45，確認 Servo 動作',
-     'Script 加兩個 SRV step，▶ RUN，確認 Progress 2/2 DONE',
-     '混合腳本：KBD + SRV step，確認按序執行',
-     '確認 Webcam 面板顯示電腦1 螢幕'],tip:''},
-  {n:6,color:'#a78bfa',title:'EVT 事件驅動驗證',desc:'確認被控端主動回傳 EVT 後，控制端腳本會等待後續事件再續跑',
-   prereq:'步驟 1–5 全部通過，且電腦1 上能以 PowerShell 開啟 `tools/send_event.ps1`。',
-   steps:['在控制端執行：<code>python tools/test_evt_flow.py --event HELLO</code>',
-     '在被控端執行：<code>powershell -ExecutionPolicy Bypass -File tools/send_event.ps1 -Port COMx -Event HELLO</code>',
-     '預期：控制端 KBM log 看到 <code>EVT:HELLO</code>，腳本由等待狀態轉成執行狀態',
-     '預期：等待步驟完成後，腳本輸入 <code>EVT:HELLO received</code> 並結束'],tip:'如果要測更複雜條件，可先固定事件名稱，再逐步加入 payload，例如 `EVT:WINDOW_FOUND|title=Setup`。'},
+buildTable(kbmRows, 'kbm-tb', '#38bdf8');
+buildTable(srvRows, 'srv-tb', '#f59e0b');
+
+const mvpSteps = [
+  {
+    n: 1,
+    color: '#a78bfa',
+    title: 'Pro Micro HID verification',
+    desc: 'Validate that Pro Micro receives serial commands and outputs HID keyboard/mouse events correctly.',
+    prereq: 'Pro Micro flashed and connected to Computer 1, Nano_KB flashed and connected to Computer 2, TX/RX/GND wired, Notepad opened on Computer 1.',
+    steps: [
+      'Set <code>PORT</code> in <code>tools/test_promicro.py</code> to Nano_KB COM port on Computer 2.',
+      'Run <code>python tools/test_promicro.py</code>.',
+      'Expected: text <code>Hello RKS</code> appears on Computer 1, mouse moves, and left click is triggered.',
+      'Expected: test script prints all checks as passed.'
+    ],
+    tip: 'For direct Pro Micro test, use Arduino Serial Monitor on Computer 1 (38400) and send TYPE:test.'
+  },
+  {
+    n: 2,
+    color: '#38bdf8',
+    title: 'Nano_KB bridge verification',
+    desc: 'Verify Nano_KB forwards commands to Pro Micro and returns ACKs.',
+    prereq: 'Nano_KB and Pro Micro are wired (TX/RX + shared GND), Notepad opened on Computer 1.',
+    steps: [
+      'Open Arduino Serial Monitor on Nano_KB COM port at 38400 with newline.',
+      'Send <code>TYPE:bridge test</code>. Expect typed text on Computer 1 and <code>OK</code> response.',
+      'Send <code>COMBO:CTRL+A</code>. Expect select all behavior on Computer 1.',
+      'Send <code>KEY:DELETE</code>. Expect selected text deleted.',
+      'Send <code>PING</code>. Expect <code>OK PONG</code>.'
+    ],
+    tip: 'Serial Monitor line ending must be Newline.'
+  },
+  {
+    n: 3,
+    color: '#f59e0b',
+    title: 'Nano_SRV servo verification',
+    desc: 'Verify Nano_SRV controls servo movement correctly.',
+    prereq: 'Nano_SRV flashed, SG90 connected to D9.',
+    steps: [
+      'Set <code>PORT</code> in <code>tools/test_nano_servo.py</code> to Nano_SRV COM port.',
+      'Run <code>python tools/test_nano_servo.py</code>.',
+      'Expected: servo moves to 90, holds, then returns home.',
+      'Expected: test script prints pass including done status.'
+    ],
+    tip: ''
+  },
+  {
+    n: 4,
+    color: '#22c55e',
+    title: 'FastAPI serial connection verification',
+    desc: 'Verify FastAPI connects both serial devices and websocket status updates work.',
+    prereq: 'Both Nano boards connected to Computer 2 and server running.',
+    steps: [
+      'Start server: <code>uvicorn main:app --reload</code>.',
+      'Open <code>http://localhost:8000</code>.',
+      'Connect KBM and SRV ports from UI and confirm LEDs turn green.',
+      'Check SRV/KBM logs in UI for websocket and serial activity.',
+      'Call <code>/health</code> and verify both connected states are true.'
+    ],
+    tip: ''
+  },
+  {
+    n: 5,
+    color: '#38bdf8',
+    title: 'End-to-end execution verification',
+    desc: 'Validate complete path from UI operations to target machine keyboard/mouse/servo output.',
+    prereq: 'Steps 1 through 4 already passed.',
+    steps: [
+      'Send text from Text Input panel and verify output on Computer 1.',
+      'Trigger shortcuts (for example CTRL+C) and verify KBM ACK logs.',
+      'Click virtual keyboard buttons and verify target input.',
+      'Attach S1, run Single Step angle movement and verify servo action.',
+      'Run SRV script and confirm progress reaches done.',
+      'Run mixed script (KBD + SRV + MSE) and confirm order is correct.',
+      'Confirm webcam feed is visible in the camera panel.'
+    ],
+    tip: ''
+  },
+  {
+    n: 6,
+    color: '#a78bfa',
+    title: 'EVT-driven flow verification',
+    desc: 'Validate pending script release based on target-side EVT events.',
+    prereq: 'Steps 1 through 5 passed and target side can run send_event.ps1.',
+    steps: [
+      'On controller side run <code>python tools/test_evt_flow.py --event HELLO</code>.',
+      'On target side run <code>powershell -ExecutionPolicy Bypass -File tools/send_event.ps1 -Port COMx -Event HELLO</code>.',
+      'Expected: controller logs show <code>EVT:HELLO</code> and script leaves waiting state.',
+      'Expected: follow-up steps execute and script finishes.'
+    ],
+    tip: 'For advanced cases, keep stable event names and append payload fields gradually.'
+  }
 ];
-const container=document.getElementById('mvp-container');
-mvpSteps.forEach(ms=>{
-  const div=document.createElement('div');
-  div.style.cssText=`background:#0d0d10;border:1px solid #1a1a24;border-radius:4px;padding:16px;margin-bottom:14px;border-left:3px solid ${ms.color}`;
-  div.innerHTML=`<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:8px">
+
+const container = document.getElementById('mvp-container');
+mvpSteps.forEach(ms => {
+  const div = document.createElement('div');
+  div.style.cssText = `background:#0d0d10;border:1px solid #1a1a24;border-radius:4px;padding:16px;margin-bottom:14px;border-left:3px solid ${ms.color}`;
+  div.innerHTML = `<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:8px;flex-wrap:wrap">
     <span style="font-family:Consolas,monospace;font-size:.75rem;color:${ms.color}">Step ${ms.n}</span>
     <span style="font-family:Consolas,monospace;font-size:.85rem;color:#e2e8f0">${ms.title}</span></div>
-    <div style="font-size:.78rem;color:#475569;margin-bottom:8px">${ms.desc}</div>
-    ${ms.prereq?`<div style="font-size:.75rem;color:#92400e;background:#1a0e00;border:1px solid #3a2000;border-radius:3px;padding:5px 8px;margin-bottom:8px">⚠ ${ms.prereq}</div>`:''}
+    <div style="font-size:.78rem;color:#64748b;margin-bottom:8px;line-height:1.55">${ms.desc}</div>
+    ${ms.prereq ? `<div style="font-size:.75rem;color:#92400e;background:#1a0e00;border:1px solid #3a2000;border-radius:3px;padding:6px 8px;margin-bottom:8px;line-height:1.5">Prerequisite: ${ms.prereq}</div>` : ''}
     <ol style="padding-left:20px;display:flex;flex-direction:column;gap:5px">
-      ${ms.steps.map(s=>`<li style="font-size:.78rem;color:#94a3b8;line-height:1.6">${s}</li>`).join('')}
+      ${ms.steps.map(s => `<li style="font-size:.78rem;color:#94a3b8;line-height:1.6">${s}</li>`).join('')}
     </ol>
-    ${ms.tip?`<div style="font-size:.73rem;color:#475569;margin-top:8px;border-top:1px solid #1a1a24;padding-top:8px">💡 ${ms.tip}</div>`:''}`;
+    ${ms.tip ? `<div style="font-size:.73rem;color:#64748b;margin-top:8px;border-top:1px solid #1a1a24;padding-top:8px;line-height:1.5">Tip: ${ms.tip}</div>` : ''}`;
   container.appendChild(div);
 });
 </script>
