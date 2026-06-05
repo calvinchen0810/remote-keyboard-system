@@ -12,6 +12,7 @@ FastAPI 主程式，整合 KBM（Keyboard+Mouse）與 SRV（Servo）
 """
 
 import asyncio
+import socket
 import json
 import logging
 import os
@@ -74,6 +75,69 @@ def _data_dir() -> str:
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
+
+
+def _find_available_port(host: str, preferred_port: int, max_tries: int = 30) -> int:
+    """Return the first bindable TCP port starting from preferred_port."""
+    for offset in range(max_tries):
+        port = preferred_port + offset
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind((host, port))
+            return port
+        except OSError:
+            continue
+        finally:
+            sock.close()
+    raise RuntimeError(f"No available port from {preferred_port} to {preferred_port + max_tries - 1}")
+
+
+def _resolve_lan_ipv4s() -> list[str]:
+    """Best-effort resolve of LAN IPv4 addresses for connection hints."""
+    ips: set[str] = set()
+
+    # Route-based local IP (doesn't send packets, just asks OS route table).
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            if ip:
+                ips.add(ip)
+        finally:
+            s.close()
+    except Exception:
+        pass
+
+    # Hostname-based IPs.
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+        for info in infos:
+            ip = info[4][0]
+            if ip:
+                ips.add(ip)
+    except Exception:
+        pass
+
+    # Filter out loopback/link-local placeholders.
+    out = [
+        ip for ip in sorted(ips)
+        if not ip.startswith("127.") and not ip.startswith("169.254.") and ip != "0.0.0.0"
+    ]
+    return out
+
+
+def _log_access_urls(host: str, port: int):
+    if host == "0.0.0.0":
+        logger.info(f"Access URL (local): http://127.0.0.1:{port}")
+        lan_ips = _resolve_lan_ipv4s()
+        if lan_ips:
+            for ip in lan_ips:
+                logger.info(f"Access URL (LAN): http://{ip}:{port}")
+        else:
+            logger.warning("No LAN IPv4 detected automatically. Please run ipconfig to check IPv4 address.")
+        return
+    logger.info(f"Access URL: http://{host}:{port}")
 
 
 # ── FrameBuffer ───────────────────────────────────────────────
@@ -1881,5 +1945,9 @@ async def visual_test_condition(cid: str):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host=HOST, port=PORT, reload=False, log_level="info")
+    bind_port = _find_available_port(HOST, PORT)
+    if bind_port != PORT:
+        logger.warning(f"Port {PORT} is already in use. Fallback to port {bind_port}.")
+    _log_access_urls(HOST, bind_port)
+    uvicorn.run(app, host=HOST, port=bind_port, reload=False, log_level="info")
 
