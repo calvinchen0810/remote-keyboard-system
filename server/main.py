@@ -16,6 +16,7 @@ import socket
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -62,6 +63,7 @@ kb_serial = KeyboardSerial()
 srv_router, srv_serial, srv_ws = create_servo_router()
 executor   = ThreadPoolExecutor(max_workers=4)
 camera: Optional[cv2.VideoCapture] = None
+current_camera_index: Optional[int] = None
 
 # 混合腳本執行 task / queue 控制
 _script_queue: asyncio.Queue["MixedScriptRequest"] = asyncio.Queue()
@@ -993,7 +995,7 @@ _bg_tasks: list[asyncio.Task] = []
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global camera
+    global camera, current_camera_index
     loop = asyncio.get_running_loop()
     srv_ws.set_loop(loop)
     kbm_ws.set_loop(loop)
@@ -1004,6 +1006,7 @@ async def lifespan(app: FastAPI):
         cam = await loop.run_in_executor(executor, _open_camera, CAMERA_INDEX)
         if cam.isOpened():
             camera = cam
+            current_camera_index = CAMERA_INDEX
             frame_buffer.start(camera)
             logger.info(f"Camera auto-started: index={CAMERA_INDEX}, Camera ready")
         else:
@@ -1029,6 +1032,7 @@ async def lifespan(app: FastAPI):
     if camera:
         camera.release()
         camera = None
+    current_camera_index = None
     executor.shutdown(wait=True, cancel_futures=True)
     logger.info("Shutdown complete.")
 
@@ -1484,7 +1488,7 @@ async def script_stop():
 
 @app.post("/script/import_bundle")
 async def script_import_bundle(req: "ScriptBundleImportRequest"):
-    global camera
+    global camera, current_camera_index
     logger.info(
         "[IMPORT] Bundle import started: %d snapshot(s), %d condition(s), %d step(s)",
         len(req.img_bundle.snapshots) if req.img_bundle else 0,
@@ -1498,6 +1502,7 @@ async def script_import_bundle(req: "ScriptBundleImportRequest"):
             cam = await loop_.run_in_executor(executor, _open_camera, CAMERA_INDEX)
             if cam.isOpened():
                 camera = cam
+                current_camera_index = CAMERA_INDEX
                 frame_buffer.start(camera)
                 logger.info(f"Camera auto-started for IMG bundle import: index={CAMERA_INDEX}")
             else:
@@ -1668,7 +1673,7 @@ async def health():
         },
         "camera": {
             "opened": camera.isOpened() if camera else False,
-            "index":  CAMERA_INDEX,
+            "index":  current_camera_index,
         },
         "script": {
             "running": running,
@@ -1710,20 +1715,101 @@ async def video_stream():
 
 class CameraStartRequest(BaseModel):
     index: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
 
 
-def _open_camera(idx: int) -> cv2.VideoCapture:
-    cap = cv2.VideoCapture(idx)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+def _open_camera(idx: int, width: Optional[int] = None, height: Optional[int] = None) -> cv2.VideoCapture:
+    # On Windows, prefer DirectShow first for more stable webcam switching.
+    if os.name == "nt":
+        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap.release()
+            cap = cv2.VideoCapture(idx, cv2.CAP_MSMF)
+    else:
+        cap = cv2.VideoCapture(idx)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  width or CAMERA_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height or CAMERA_HEIGHT)
     return cap
+
+
+def _windows_camera_friendly_names() -> list[str]:
+    """Best-effort friendly camera names from Windows PnP database."""
+    if os.name != "nt":
+        return []
+    candidates: list[list[str]] = [
+        [
+            "wmic",
+            "path",
+            "Win32_PnPEntity",
+            "where",
+            "PNPClass='Camera' or PNPClass='Image'",
+            "get",
+            "Name",
+        ],
+        ["pnputil", "/enum-devices", "/class", "Camera"],
+    ]
+
+    for cmd in candidates:
+        try:
+            cp = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                timeout=8,
+                check=False,
+            )
+            raw = (cp.stdout or "").strip()
+            if not raw:
+                continue
+
+            names: list[str] = []
+            if cmd[0] == "wmic":
+                for line in raw.splitlines():
+                    s = line.strip()
+                    if not s or s.lower() == "name":
+                        continue
+                    names.append(s)
+            else:
+                # Parse lines like: "Device Description:         HP 5MP Camera"
+                for line in raw.splitlines():
+                    marker = "Device Description:"
+                    if marker in line:
+                        names.append(line.split(marker, 1)[1].strip())
+
+            # Keep order but remove duplicates and noisy/non-video device names.
+            seen: set[str] = set()
+            filtered: list[str] = []
+            noisy_keywords = ("virtual", "obs", "screen", "ndi")
+            non_video_keywords = (" ir ", "infrared", "depth")
+            for n in names:
+                key = n.strip()
+                lower = key.lower()
+                if not key or key in seen:
+                    continue
+                if any(k in lower for k in noisy_keywords):
+                    continue
+                padded = f" {lower} "
+                if any(k in padded for k in non_video_keywords):
+                    continue
+                seen.add(key)
+                filtered.append(key)
+            if filtered:
+                return filtered
+        except Exception:
+            continue
+    return []
 
 
 @app.get("/camera/devices")
 async def camera_devices():
-    """Probe indices 0-3 and return those that open successfully."""
+    """Return camera list with friendly names; keep friendly devices selectable."""
     def _probe():
         found = []
+        friendly_names = _windows_camera_friendly_names()
+        opened: list[dict[str, int]] = []
         # Silence OpenCV's C-level logger during probing so OBSensor/depth-camera
         # backends don't spam "Camera index out of range" errors to the console.
         try:
@@ -1732,21 +1818,45 @@ async def camera_devices():
         except Exception:
             saved_level = None
         try:
-            for i in range(4):
-                cap = cv2.VideoCapture(i)
+            for i in range(10):
+                cap = _open_camera(i)
                 if cap.isOpened():
                     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                     cap.release()
-                    found.append({"index": i, "label": f"Camera {i}  ({w}\u00d7{h})"})
+                    opened.append({"index": i, "w": w, "h": h})
                 else:
                     cap.release()
+
+            # Map friendly names to openable devices in discovery order.
+            for pos, dev in enumerate(opened):
+                name = friendly_names[pos] if pos < len(friendly_names) else f"Camera {dev['index']}"
+                found.append({
+                    "index": dev["index"],
+                    "label": name,
+                    "available": True,
+                })
+
+            # Include remaining friendly names as candidates (selectable).
+            for pos in range(len(opened), len(friendly_names)):
+                name = friendly_names[pos]
+                found.append({"index": pos, "label": name, "available": True})
+
+            # If no friendly names were resolved, still expose opened cameras.
+            if not friendly_names and not found:
+                for dev in opened:
+                    found.append({
+                        "index": dev["index"],
+                        "label": f"Camera {dev['index']}",
+                        "available": True,
+                    })
         finally:
             if saved_level is not None:
                 try:
                     cv2.setLogLevel(saved_level)
                 except Exception:
                     pass
+        found.sort(key=lambda d: int(d.get("index", 0)))
         return found
     loop = asyncio.get_running_loop()
     devices = await loop.run_in_executor(executor, _probe)
@@ -1755,34 +1865,63 @@ async def camera_devices():
 
 @app.post("/camera/start")
 async def camera_start(req: Optional[CameraStartRequest] = None):
-    global camera
+    global camera, current_camera_index
     idx = (req.index if req and req.index is not None else None)
+    w = (req.width if req and req.width is not None else None)
+    h = (req.height if req and req.height is not None else None)
     if idx is None:
         idx = CAMERA_INDEX
+
+    if camera and camera.isOpened() and current_camera_index == idx:
+        return {"ok": True, "already": True, "index": idx}
+
+    previous_idx = current_camera_index
     if camera and camera.isOpened():
-        return {"ok": True, "already": True}
+        frame_buffer.stop()
+        camera.release()
+        camera = None
+        current_camera_index = None
+
     loop = asyncio.get_running_loop()
-    camera = await loop.run_in_executor(executor, _open_camera, idx)
-    aw = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-    ah = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    new_camera = await loop.run_in_executor(executor, _open_camera, idx, w, h)
+    if new_camera is None or not new_camera.isOpened():
+        if new_camera is not None:
+            new_camera.release()
+        # Best-effort rollback to previously opened camera.
+        if previous_idx is not None and previous_idx != idx:
+            fallback_camera = await loop.run_in_executor(executor, _open_camera, previous_idx, w, h)
+            if fallback_camera.isOpened():
+                camera = fallback_camera
+                current_camera_index = previous_idx
+                frame_buffer.start(camera)
+                logger.warning(f"Camera switch failed: requested index={idx}, restored index={previous_idx}")
+            else:
+                fallback_camera.release()
+        raise HTTPException(503, f"Camera index {idx} not available")
+
+    camera = new_camera
+    current_camera_index = idx
+    aw = int(new_camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+    ah = int(new_camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
     logger.info(f"Camera opened index={idx}: {aw}x{ah}, Camera ready")
-    frame_buffer.start(camera)
+    frame_buffer.start(new_camera)
     return {"ok": True, "width": aw, "height": ah, "index": idx}
 
 @app.post("/camera/stop")
 async def camera_stop():
-    global camera
+    global camera, current_camera_index
     frame_buffer.stop()
     if camera:
         camera.release()
         camera = None
+    current_camera_index = None
     logger.info("Camera closed.")
     return {"ok": True}
 
 @app.get("/camera/status")
 async def camera_status():
     opened = bool(camera and camera.isOpened())
-    return {"opened": opened}
+    return {"opened": opened, "index": current_camera_index}
 
 
 # ── Visual Trigger API ────────────────────────────────────────

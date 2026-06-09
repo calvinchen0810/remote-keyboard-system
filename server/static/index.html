@@ -109,6 +109,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .cam-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(56,189,248,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(56,189,248,.03) 1px,transparent 1px);background-size:20px 20px}
 #cam-tag{position:absolute;top:5px;left:7px;font-family:var(--mono);font-size:9px;color:#22d3ee;letter-spacing:.1em}
 #cam-live{position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--grn);display:none}
+#cam-view{width:100%;height:100%;display:none;cursor:grab;touch-action:none}
+#cam-view.dragging{cursor:grabbing}
 #cam-img{width:100%;height:100%;object-fit:cover;display:none}
 #cam-offline{color:#1e3a4a;font-family:var(--mono);font-size:10px;display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column;gap:8px}
 #txt-panel{flex-shrink:0}
@@ -267,11 +269,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 <div id="topbar">
   <span id="logo">RKS</span>
   <div class="tbsep"></div>
-  <div class="led led-dim" id="cam-led"></div>
   <span style="font-family:var(--mono);font-size:10px;color:var(--fg2)">CAM</span>
-  <select id="cam-dev-sel" style="width:clamp(90px,10vw,150px);font-size:10px;font-family:var(--mono);background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:1px 3px;outline:none" onchange="camDevIdx=parseInt(this.value)||0"><option value="0">Camera 0</option></select>
+  <div class="led led-dim" id="cam-led"></div>
+  <select class="tbsel" id="cam-dev-sel" style="font-size:10px;font-family:var(--mono)" onchange="camDevIdx=parseInt(this.value)||0"><option value="0">Camera 0</option></select>
+  <select id="cam-res-sel" style="width:clamp(86px,9vw,126px);font-size:10px;font-family:var(--mono);background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:1px 3px;outline:none">
+    <option value="640x360">640x360</option>
+    <option value="640x480">640x480</option>
+    <option value="1280x720" selected>1280x720</option>
+    <option value="1920x1080">1920x1080</option>
+  </select>
   <button class="btn-sm" id="cam-scan-btn" onclick="scanCamDevices()" title="Scan cameras" style="padding:2px 6px">⟳</button>
   <button class="btn-sm" id="cam-toggle-btn" onclick="camToggle()">OFF</button>
+  <button class="btn-sm" id="cam-zoom-in-btn" onclick="camZoomIn()" title="Zoom in" style="padding:2px 6px">+</button>
+  <button class="btn-sm" id="cam-zoom-out-btn" onclick="camZoomOut()" title="Zoom out" style="padding:2px 6px">-</button>
   <div class="tbsep"></div>
   <div class="tb-grp">
     <span class="tb-grp-lbl" style="color:var(--amb)">SRV</span>
@@ -347,11 +357,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 <!-- MID -->
 <div id="mid-col">
   <div class="pn" style="flex:1;min-height:0" id="cam-panel">
-    <div class="ph">Webcam <span id="cam-res" style="font-size:9px;color:var(--grn2)"></span></div>
+    <div class="ph">Webcam <span id="cam-res" style="font-size:9px;color:var(--grn2)"></span><span id="cam-panzoom" style="font-size:9px;color:var(--fg3);margin-left:6px"></span></div>
     <div id="cam-box">
-      <div class="cam-grid"></div>
       <span id="cam-tag">LIVE ●</span>
       <div id="cam-live"></div>
+      <canvas id="cam-view"></canvas>
       <img id="cam-img" src="" style="display:none" onerror="camError()" onload="camLoaded()">
       <div id="cam-offline"><span style="font-size:1.8rem;opacity:.2">⬛</span><span>CAMERA OFFLINE</span></div>
     </div>
@@ -1278,9 +1288,230 @@ function manualSend(){
 // ── Webcam ───────────────────────────────────────────────────
 let camEnabled = false;
 let camDevIdx = 0;
+const camView = {
+  zoom: 1,
+  minZoom: 1,
+  maxZoom: 5,
+  centerX: 0.5,
+  centerY: 0.5,
+  dragging: false,
+  ptrId: null,
+  lastX: 0,
+  lastY: 0,
+  drawRect: null,
+  rafId: 0,
+};
+
+function camClampCenter(){
+  const z = Math.max(camView.minZoom, camView.zoom);
+  const halfW = 0.5 / z;
+  const halfH = 0.5 / z;
+  camView.centerX = Math.min(1 - halfW, Math.max(halfW, camView.centerX));
+  camView.centerY = Math.min(1 - halfH, Math.max(halfH, camView.centerY));
+}
+function camUpdateHud(){
+  const hud = document.getElementById('cam-panzoom');
+  if(!hud) return;
+  const px = Math.round((camView.centerX - 0.5) * 100);
+  const py = Math.round((camView.centerY - 0.5) * 100);
+  hud.textContent = `z ${camView.zoom.toFixed(2)}x  pan ${px},${py}`;
+}
+function camResetView(){
+  camView.zoom = 1;
+  camView.centerX = 0.5;
+  camView.centerY = 0.5;
+  camClampCenter();
+  camUpdateHud();
+}
+function camApplyZoom(factor, nx = 0.5, ny = 0.5){
+  const oldZoom = camView.zoom;
+  const newZoom = Math.min(camView.maxZoom, Math.max(camView.minZoom, oldZoom * factor));
+  if(Math.abs(newZoom - oldZoom) < 0.0001) return;
+
+  const srcWOld = 1 / oldZoom;
+  const srcHOld = 1 / oldZoom;
+  const srcWNew = 1 / newZoom;
+  const srcHNew = 1 / newZoom;
+  const srcXOld = camView.centerX - srcWOld * 0.5;
+  const srcYOld = camView.centerY - srcHOld * 0.5;
+  const anchorX = srcXOld + nx * srcWOld;
+  const anchorY = srcYOld + ny * srcHOld;
+
+  camView.zoom = newZoom;
+  camView.centerX = anchorX - nx * srcWNew + srcWNew * 0.5;
+  camView.centerY = anchorY - ny * srcHNew + srcHNew * 0.5;
+  camClampCenter();
+  camUpdateHud();
+  camDrawFrame();
+}
+function camZoomIn(){
+  camApplyZoom(1.1, 0.5, 0.5);
+}
+function camZoomOut(){
+  camApplyZoom(1 / 1.1, 0.5, 0.5);
+}
+function camResizeCanvas(){
+  const canvas = document.getElementById('cam-view');
+  if(!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(rect.width * dpr));
+  const h = Math.max(1, Math.round(rect.height * dpr));
+  if(canvas.width !== w || canvas.height !== h){
+    canvas.width = w;
+    canvas.height = h;
+  }
+}
+function camDrawFrame(){
+  const canvas = document.getElementById('cam-view');
+  const img = document.getElementById('cam-img');
+  if(!canvas || !img) return;
+  camResizeCanvas();
+  const cw = canvas.width;
+  const ch = canvas.height;
+  if(cw <= 0 || ch <= 0 || !img.naturalWidth || !img.naturalHeight) return;
+  const ctx = canvas.getContext('2d');
+  if(!ctx) return;
+
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  camClampCenter();
+
+  const sw = iw / camView.zoom;
+  const sh = ih / camView.zoom;
+  let sx = camView.centerX * iw - sw * 0.5;
+  let sy = camView.centerY * ih - sh * 0.5;
+  sx = Math.max(0, Math.min(iw - sw, sx));
+  sy = Math.max(0, Math.min(ih - sh, sy));
+
+  // Preserve display aspect ratio: draw into a centered letterbox rect.
+  const srcAspect = sw / sh;
+  const dstAspect = cw / ch;
+  let dw = cw;
+  let dh = ch;
+  let dx = 0;
+  let dy = 0;
+  if(dstAspect > srcAspect){
+    dh = ch;
+    dw = dh * srcAspect;
+    dx = (cw - dw) * 0.5;
+  }else{
+    dw = cw;
+    dh = dw / srcAspect;
+    dy = (ch - dh) * 0.5;
+  }
+  camView.drawRect = {x:dx,y:dy,w:dw,h:dh};
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.clearRect(0, 0, cw, ch);
+  ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+}
+function camRenderLoop(){
+  if(!camEnabled) return;
+  camDrawFrame();
+  camView.rafId = requestAnimationFrame(camRenderLoop);
+}
+function camStartRenderLoop(){
+  if(camView.rafId) return;
+  camView.rafId = requestAnimationFrame(camRenderLoop);
+}
+function camStopRenderLoop(){
+  if(camView.rafId){
+    cancelAnimationFrame(camView.rafId);
+    camView.rafId = 0;
+  }
+}
+function camInitMouseControls(){
+  const canvas = document.getElementById('cam-view');
+  if(!canvas) return;
+
+  const startDrag = (clientX, clientY, pointerId = null)=>{
+    camView.dragging = true;
+    camView.ptrId = pointerId;
+    camView.lastX = clientX;
+    camView.lastY = clientY;
+    canvas.classList.add('dragging');
+  };
+
+  const moveDrag = (clientX, clientY, pointerId = null)=>{
+    if(!camView.dragging) return;
+    if(camView.ptrId !== null && pointerId !== null && camView.ptrId !== pointerId) return;
+    const drawRect = camView.drawRect;
+    if(!drawRect || drawRect.w <= 0 || drawRect.h <= 0) return;
+    const dx = clientX - camView.lastX;
+    const dy = clientY - camView.lastY;
+    camView.lastX = clientX;
+    camView.lastY = clientY;
+
+    camView.centerX -= dx / (drawRect.w * camView.zoom);
+    camView.centerY -= dy / (drawRect.h * camView.zoom);
+    camClampCenter();
+    camUpdateHud();
+    camDrawFrame();
+  };
+
+  const stopDrag = (pointerId = null)=>{
+    if(!camView.dragging) return;
+    if(camView.ptrId !== null && pointerId !== null && pointerId !== camView.ptrId) return;
+    camView.dragging = false;
+    camView.ptrId = null;
+    canvas.classList.remove('dragging');
+  };
+
+  if(window.PointerEvent){
+    canvas.addEventListener('pointerdown', (e)=>{
+      if(e.button !== 0) return;
+      startDrag(e.clientX, e.clientY, e.pointerId);
+      if(canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', (e)=>moveDrag(e.clientX, e.clientY, e.pointerId));
+    canvas.addEventListener('pointerup', (e)=>stopDrag(e.pointerId));
+    canvas.addEventListener('pointercancel', (e)=>stopDrag(e.pointerId));
+    canvas.addEventListener('pointerleave', (e)=>stopDrag(e.pointerId));
+  }
+
+  // Fallback for environments where Pointer Events are disabled/unreliable.
+  canvas.addEventListener('mousedown', (e)=>{
+    if(e.button !== 0) return;
+    startDrag(e.clientX, e.clientY, null);
+  });
+  window.addEventListener('mousemove', (e)=>moveDrag(e.clientX, e.clientY, null));
+  window.addEventListener('mouseup', ()=>stopDrag(null));
+  canvas.addEventListener('mouseleave', ()=>stopDrag(null));
+  canvas.addEventListener('dragstart', (e)=>e.preventDefault());
+
+  canvas.addEventListener('wheel', (e)=>{
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const drawRect = camView.drawRect;
+    if(!drawRect || drawRect.w <= 0 || drawRect.h <= 0) return;
+
+    const localX = (e.clientX - rect.left) * (canvas.width / Math.max(1, rect.width));
+    const localY = (e.clientY - rect.top) * (canvas.height / Math.max(1, rect.height));
+    if(localX < drawRect.x || localX > drawRect.x + drawRect.w || localY < drawRect.y || localY > drawRect.y + drawRect.h) return;
+
+    const nx = Math.min(1, Math.max(0, (localX - drawRect.x) / drawRect.w));
+    const ny = Math.min(1, Math.max(0, (localY - drawRect.y) / drawRect.h));
+
+    const factor = e.deltaY < 0 ? 1.1 : (1 / 1.1);
+    camApplyZoom(factor, nx, ny);
+  }, {passive:false});
+
+  canvas.addEventListener('dblclick', ()=>{
+    camResetView();
+    camDrawFrame();
+  });
+}
 
 function camToggle(){
   if(camEnabled) camStop(); else camStart();
+}
+function camUpdateControls(){
+  const devSel = document.getElementById('cam-dev-sel');
+  const resSel = document.getElementById('cam-res-sel');
+  if(devSel) devSel.disabled = camEnabled;
+  if(resSel) resSel.disabled = camEnabled;
 }
 async function scanCamDevices(){
   const btn = document.getElementById('cam-scan-btn');
@@ -1304,6 +1535,7 @@ async function scanCamDevices(){
     }
     // restore previous selection if still available
     if(cur && [...sel.options].some(o=>o.value===cur)) sel.value = cur;
+    if(!sel.value && sel.options.length>0) sel.value = sel.options[0].value;
     camDevIdx = parseInt(sel.value) || 0;
   }catch(e){ addLog('srv','Camera scan error: '+e,'cerr'); }
   finally{ if(btn) btn.disabled = false; }
@@ -1311,40 +1543,66 @@ async function scanCamDevices(){
 async function camStart(){
   try{
     camDevIdx = parseInt(document.getElementById('cam-dev-sel').value) || 0;
+    const resSel = document.getElementById('cam-res-sel');
+    const resStr = (resSel && resSel.value) ? resSel.value : '1280x720';
+    const [rw, rh] = resStr.split('x').map(v => parseInt(v, 10));
+    const width = Number.isFinite(rw) ? rw : 1280;
+    const height = Number.isFinite(rh) ? rh : 720;
     const r = await fetch('/camera/start', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({index: camDevIdx})
+      body: JSON.stringify({index: camDevIdx, width, height})
     });
     if(!r.ok){ addLog('srv','Camera start failed: '+r.status,'cerr'); return; }
+    const d = await r.json().catch(()=>({}));
     camEnabled = true;
+    camUpdateControls();
+    const res = document.getElementById('cam-res');
+    if(res) res.textContent = `(${d.width || width}x${d.height || height})`;
     const btn = document.getElementById('cam-toggle-btn');
     btn.textContent = 'ON';
     btn.className = 'btn-g btn-sm';
+    camResetView();
     document.getElementById('cam-img').src = '/stream?t='+Date.now();
   }catch(e){ addLog('srv','Camera error: '+e,'cerr'); }
 }
 async function camStop(){
   try{ await fetch('/camera/stop', {method:'POST'}); }catch(_){}
   camEnabled = false;
+  camUpdateControls();
   const btn = document.getElementById('cam-toggle-btn');
   btn.textContent = 'OFF';
   btn.className = 'btn-sm';
+  camStopRenderLoop();
   const img = document.getElementById('cam-img');
   img.src = '';
   img.style.display = 'none';
+  const canvas = document.getElementById('cam-view');
+  if(canvas){
+    const ctx = canvas.getContext('2d');
+    if(ctx) ctx.clearRect(0,0,canvas.width,canvas.height);
+    canvas.style.display = 'none';
+  }
   document.getElementById('cam-offline').style.display = 'flex';
   document.getElementById('cam-live').style.display = 'none';
   document.getElementById('cam-led').className = 'led led-dim';
+  const res = document.getElementById('cam-res');
+  if(res) res.textContent = '';
 }
 function camLoaded(){
-  document.getElementById('cam-img').style.display='block';
+  document.getElementById('cam-img').style.display='none';
+  const canvas = document.getElementById('cam-view');
+  if(canvas) canvas.style.display='block';
   document.getElementById('cam-offline').style.display='none';
   document.getElementById('cam-live').style.display='block';
   document.getElementById('cam-led').className='led led-grn';
+  camStartRenderLoop();
 }
 function camError(){
+  camStopRenderLoop();
   document.getElementById('cam-img').style.display='none';
+  const canvas = document.getElementById('cam-view');
+  if(canvas) canvas.style.display='none';
   document.getElementById('cam-offline').style.display='flex';
   document.getElementById('cam-live').style.display='none';
   document.getElementById('cam-led').className='led led-dim';
@@ -1710,6 +1968,10 @@ setInterval(refreshScriptStatus,4000);
 refreshCondList();
 refreshSnapList();
 scanCamDevices();
+camInitMouseControls();
+camResetView();
+camUpdateControls();
+window.addEventListener('resize',()=>{ if(camEnabled) camDrawFrame(); });
 addLog('srv','RKS v4 ready','cdim');
 addLog('kbm','RKS v4 ready','cdim');
 </script>
