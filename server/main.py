@@ -32,6 +32,7 @@ import uuid
 
 import numpy as np
 import cv2
+from cv2_enumerate_cameras import enumerate_cameras
 import serial
 import serial.tools.list_ports
 import uvicorn
@@ -1733,83 +1734,31 @@ def _open_camera(idx: int, width: Optional[int] = None, height: Optional[int] = 
     return cap
 
 
-def _windows_camera_friendly_names() -> list[str]:
-    """Best-effort friendly camera names from Windows PnP database."""
+def _windows_camera_friendly_names(backend: int = cv2.CAP_DSHOW) -> dict[int, str]:
+    """Return camera names keyed by the selected OpenCV backend's device indices."""
     if os.name != "nt":
-        return []
-    candidates: list[list[str]] = [
-        [
-            "wmic",
-            "path",
-            "Win32_PnPEntity",
-            "where",
-            "PNPClass='Camera' or PNPClass='Image'",
-            "get",
-            "Name",
-        ],
-        ["pnputil", "/enum-devices", "/class", "Camera"],
-    ]
-
-    for cmd in candidates:
-        try:
-            cp = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="ignore",
-                timeout=8,
-                check=False,
-            )
-            raw = (cp.stdout or "").strip()
-            if not raw:
-                continue
-
-            names: list[str] = []
-            if cmd[0] == "wmic":
-                for line in raw.splitlines():
-                    s = line.strip()
-                    if not s or s.lower() == "name":
-                        continue
-                    names.append(s)
-            else:
-                # Parse lines like: "Device Description:         HP 5MP Camera"
-                for line in raw.splitlines():
-                    marker = "Device Description:"
-                    if marker in line:
-                        names.append(line.split(marker, 1)[1].strip())
-
-            # Keep order but remove duplicates and noisy/non-video device names.
-            seen: set[str] = set()
-            filtered: list[str] = []
-            noisy_keywords = ("virtual", "obs", "screen", "ndi")
-            non_video_keywords = (" ir ", "infrared", "depth")
-            for n in names:
-                key = n.strip()
-                lower = key.lower()
-                if not key or key in seen:
-                    continue
-                if any(k in lower for k in noisy_keywords):
-                    continue
-                padded = f" {lower} "
-                if any(k in padded for k in non_video_keywords):
-                    continue
-                seen.add(key)
-                filtered.append(key)
-            if filtered:
-                return filtered
-        except Exception:
-            continue
-    return []
+        return {}
+    try:
+        return {info.index: info.name for info in enumerate_cameras(backend)}
+    except Exception as exc:
+        logger.warning(f"Camera name enumeration failed for backend {backend}: {exc}")
+        return {}
 
 
 @app.get("/camera/devices")
 async def camera_devices():
-    """Return camera list with friendly names; keep friendly devices selectable."""
+    """Return openable cameras with names matched by backend and device index."""
     def _probe():
         found = []
-        friendly_names = _windows_camera_friendly_names()
-        opened: list[dict[str, int]] = []
+        friendly_names = {
+            backend: _windows_camera_friendly_names(backend)
+            for backend in (cv2.CAP_DSHOW, cv2.CAP_MSMF)
+        }
+        indices = set(range(10))
+        for names in friendly_names.values():
+            indices.update(names)
+        if current_camera_index is not None:
+            indices.add(current_camera_index)
         # Silence OpenCV's C-level logger during probing so OBSensor/depth-camera
         # backends don't spam "Camera index out of range" errors to the console.
         try:
@@ -1818,38 +1767,21 @@ async def camera_devices():
         except Exception:
             saved_level = None
         try:
-            for i in range(10):
-                cap = _open_camera(i)
-                if cap.isOpened():
-                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    cap.release()
-                    opened.append({"index": i, "w": w, "h": h})
-                else:
-                    cap.release()
-
-            # Map friendly names to openable devices in discovery order.
-            for pos, dev in enumerate(opened):
-                name = friendly_names[pos] if pos < len(friendly_names) else f"Camera {dev['index']}"
-                found.append({
-                    "index": dev["index"],
-                    "label": name,
-                    "available": True,
-                })
-
-            # Include remaining friendly names as candidates (selectable).
-            for pos in range(len(opened), len(friendly_names)):
-                name = friendly_names[pos]
-                found.append({"index": pos, "label": name, "available": True})
-
-            # If no friendly names were resolved, still expose opened cameras.
-            if not friendly_names and not found:
-                for dev in opened:
-                    found.append({
-                        "index": dev["index"],
-                        "label": f"Camera {dev['index']}",
-                        "available": True,
-                    })
+            for index in sorted(indices):
+                active = bool(camera and camera.isOpened() and current_camera_index == index)
+                cap = camera if active else _open_camera(index)
+                try:
+                    if cap is not None and cap.isOpened():
+                        backend = int(cap.get(cv2.CAP_PROP_BACKEND))
+                        name = friendly_names.get(backend, {}).get(index)
+                        found.append({
+                            "index": index,
+                            "label": name or f"Camera {index}",
+                            "available": True,
+                        })
+                finally:
+                    if cap is not None and not active:
+                        cap.release()
         finally:
             if saved_level is not None:
                 try:
