@@ -747,6 +747,7 @@ function previewStep(){const p=getSSValues();drawCanvas();addLog('srv',`Preview 
 
 // ── Script Editor ────────────────────────────────────────────
 function getDefaultDelay(){return parseInt(document.getElementById('default-delay').value)||1000;}
+const KBD_SPECIAL_KEYS=['ENTER','ESC','TAB','DELETE','UP','DOWN','LEFT','RIGHT','HOME','END','PAGEUP','PAGEDOWN','F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12'];
 
 function addSrvStep(){
   const ss=getSSValues();
@@ -809,8 +810,7 @@ function renderSteps(){
       } else if(s.cmd_type==='TYPE'){
         fields=`<input class="ti" value="${esc(s.text||'')}" style="width:260px;max-width:100%" oninput="updStep(${s._id},'text',this.value)">`;
       } else {
-        const SKEYS=['ENTER','ESC','TAB','DELETE','UP','DOWN','LEFT','RIGHT','HOME','END','PAGEUP','PAGEDOWN','F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12'];
-        fields=`<select class="ti-s" style="width:80px" onchange="updStep(${s._id},'key',this.value)">${SKEYS.map(k=>`<option${k===(s.key||'ENTER')?' selected':''}>${k}</option>`).join('')}</select>`;
+        fields=`<select class="ti-s" style="width:80px" onchange="updStep(${s._id},'key',this.value)">${KBD_SPECIAL_KEYS.map(k=>`<option${k===(s.key||'ENTER')?' selected':''}>${k}</option>`).join('')}</select>`;
       }
       params=`<select class="ti-s" style="width:72px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>
         <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px">${fields}</span>`;
@@ -849,7 +849,13 @@ function renderSteps(){
   });
 }
 function updStep(id,key,val){const s=steps.find(x=>x._id===id);if(!s)return;const nk=['delay_ms','servo_id','angle','speed','duration_ms','home','x','y','amount'];s[key]=nk.includes(key)?parseInt(val)||0:val;}
-function updStepKbd(id,t){const s=steps.find(x=>x._id===id);if(s){s.cmd_type=t;renderSteps();}}
+function updStepKbd(id,t){
+  const s=steps.find(x=>x._id===id);
+  if(!s)return;
+  s.cmd_type=t;
+  if(t==='KEY'&&!KBD_SPECIAL_KEYS.includes(s.key))s.key='ENTER';
+  renderSteps();
+}
 function updStepMse(id,t){const s=steps.find(x=>x._id===id);if(s){s.action=t;renderSteps();}}
 
 function collectImgBundle(){
