@@ -286,6 +286,45 @@ curl.exe -X POST http://127.0.0.1:8000/script/run ^
 curl.exe -X POST http://127.0.0.1:8000/script/stop
 ```
 
+### Clear snapshots, conditions and scripts
+
+From the repository root, use the included `clear_command.json`:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/script/run -H "Content-Type: application/json" --data-binary "@clear_command.json"
+```
+
+```json
+{
+  "command": "clear",
+  "targets": ["snapshots", "conditions", "scripts"]
+}
+```
+
+- The command is processed directly, not placed in the script queue.
+- It cancels and awaits the running script, discards queued scripts, clears the EVT Pool and buffered events, then deletes conditions (including persisted data and match runtime) and snapshots.
+- All connected web pages clear their Script Editor, visual lists and progress display. Reload pages opened before this feature was installed once to load the new notification handler.
+- All three targets are required. Unknown commands, partial/unknown/duplicate targets and extra fields such as `steps`, `loop` or `img_bundle` return HTTP 400 before clearing anything.
+- Repeating the command is safe: empty pools return success with zero counts.
+- Camera and serial connections, servo configuration and existing logs are preserved. Actions already sent to hardware are not guaranteed to stop.
+- If conditions cannot be persisted, HTTP 500 is returned. Scripts have already been stopped, but conditions and snapshots are retained; fix storage access and retry.
+
+Example response when already empty:
+
+```json
+{
+  "ok": true,
+  "command": "clear",
+  "cleared": {
+    "running_scripts": 0,
+    "queued_scripts": 0,
+    "pending_scripts": 0,
+    "conditions": 0,
+    "snapshots": 0
+  }
+}
+```
+
 ### Check script status
 
 ```bash

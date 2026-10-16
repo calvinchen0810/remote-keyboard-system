@@ -69,6 +69,7 @@ current_camera_index: Optional[int] = None
 # 混合腳本執行 task / queue 控制
 _script_queue: asyncio.Queue["MixedScriptRequest"] = asyncio.Queue()
 _script_runner_task: Optional[asyncio.Task] = None
+_script_control_lock = asyncio.Lock()
 
 DEFAULT_EVT_TIMEOUT_MS = int(os.getenv("DEFAULT_EVT_TIMEOUT_MS", "30000"))
 
@@ -251,6 +252,12 @@ class SnapshotPool:
                 return True
             return False
 
+    def clear(self) -> int:
+        with self._lock:
+            count = len(self._items)
+            self._items.clear()
+            return count
+
     def list_all(self) -> list:
         with self._lock:
             return [
@@ -384,6 +391,25 @@ class ConditionManager:
                 self._save()
                 return True
             return False
+
+    def clear(self) -> int:
+        with self._lock:
+            path = self._persist_path()
+            temp_path = path + ".tmp"
+            try:
+                with open(temp_path, "w", encoding="utf-8") as output:
+                    json.dump([], output)
+                os.replace(temp_path, path)
+            except OSError:
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+                raise
+            count = len(self._conditions)
+            self._conditions.clear()
+            self._runtime.clear()
+            return count
 
     def get_armed(self) -> list:
         with self._lock:
@@ -687,6 +713,11 @@ async def _auto_attach_servos(req: "MixedScriptRequest"):
 
 
 async def _release_pending_for_event(evt: str, source: str = "event"):
+    async with _script_control_lock:
+        return await _release_pending_scripts(evt, source)
+
+
+async def _release_pending_scripts(evt: str, source: str):
     released = await pending_evt_pool.drain(evt)
     if not released:
         return 0
@@ -1293,6 +1324,7 @@ async def _run_mixed_script(req: MixedScriptRequest):
         await kbm_ws.broadcast({"type": "script_stopped"})
         srv_ws.broadcast_sync({"type": "status", "state": "idle"})
         logger.info("Script cancelled")
+        raise
 
 
 async def _script_runner():
@@ -1322,6 +1354,7 @@ async def _drain_script_queue():
     while True:
         try:
             _script_queue.get_nowait()
+            _script_queue.task_done()
         except asyncio.QueueEmpty:
             break
 
@@ -1397,10 +1430,49 @@ async def script_run(request: Request):
            -H "Content-Type: application/json" \\
            --data-binary "@exported_script.json"
     """
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(400, "Invalid JSON body") from exc
     if not isinstance(payload, dict):
         raise HTTPException(400, "JSON body 必須是 object")
 
+    async with _script_control_lock:
+        if "command" in payload:
+            return await _clear_workspace(payload)
+        return await _submit_script(payload)
+
+
+async def _clear_workspace(payload: dict):
+    targets = payload.get("targets")
+    if (
+        payload.get("command") != "clear"
+        or set(payload) != {"command", "targets"}
+        or not isinstance(targets, list)
+        or len(targets) != 3
+        or not all(isinstance(target, str) for target in targets)
+        or set(targets) != {"snapshots", "conditions", "scripts"}
+    ):
+        raise HTTPException(400, 'Use {"command":"clear","targets":["snapshots","conditions","scripts"]} without script fields')
+
+    pending = await pending_evt_pool.snapshot()
+    cleared = {
+        "running_scripts": int(bool(_script_runner_task and not _script_runner_task.done())),
+        "queued_scripts": _script_queue.qsize(),
+        "pending_scripts": pending["total"],
+    }
+    await _stop_scripts(stop_servos=False)
+    try:
+        cleared["conditions"] = condition_manager.clear()
+    except OSError as exc:
+        logger.exception("Failed to persist cleared conditions")
+        raise HTTPException(500, "Scripts stopped, but conditions could not be cleared; snapshots retained. Retry after fixing storage.") from exc
+    cleared["snapshots"] = snapshot_pool.clear()
+    await srv_ws.broadcast({"type": "workspace_cleared", "targets": targets, "cleared": cleared})
+    return {"ok": True, "command": "clear", "cleared": cleared}
+
+
+async def _submit_script(payload: dict):
     img_import_summary = {
         "snapshots": 0,
         "conditions": 0,
@@ -1409,7 +1481,7 @@ async def script_run(request: Request):
 
     if isinstance(payload.get("img_bundle"), dict):
         bundle_req = ScriptBundleImportRequest.model_validate(payload)
-        bundle_result = await script_import_bundle(bundle_req)
+        bundle_result = await _import_script_bundle(bundle_req)
         img_import_summary = bundle_result["img_import"]
         payload = {
             "loop": bundle_result["loop"],
@@ -1470,25 +1542,37 @@ async def script_run(request: Request):
 
 @app.post("/script/stop")
 async def script_stop():
+    async with _script_control_lock:
+        return await _stop_scripts()
+
+
+async def _stop_scripts(stop_servos: bool = True):
     global _script_runner_task
-    if _script_runner_task and not _script_runner_task.done():
-        _script_runner_task.cancel()
+    runner = _script_runner_task
+    if runner and not runner.done():
+        runner.cancel()
         try:
-            await _script_runner_task
+            await runner
         except asyncio.CancelledError:
             pass
+    _script_runner_task = None
     await _drain_script_queue()
     await event_bus.clear()
     await pending_evt_pool.clear()
     await _notify_pool_snapshot()
     # 也停 Servo
-    if srv_serial.is_connected:
+    if stop_servos and srv_serial.is_connected:
         srv_serial.send("STOP")
     return {"ok": True}
 
 
 @app.post("/script/import_bundle")
 async def script_import_bundle(req: "ScriptBundleImportRequest"):
+    async with _script_control_lock:
+        return await _import_script_bundle(req)
+
+
+async def _import_script_bundle(req: "ScriptBundleImportRequest"):
     global camera, current_camera_index
     logger.info(
         "[IMPORT] Bundle import started: %d snapshot(s), %d condition(s), %d step(s)",

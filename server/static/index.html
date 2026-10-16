@@ -762,6 +762,20 @@ function addEvtStep(){steps.unshift({type:'evt',_id:++stepIdCnt,delay_ms:0,evt:'
 function clearAllSteps(){steps=[];renderSteps();}
 function delStep(id){steps=steps.filter(s=>s._id!==id);renderSteps();}
 
+function applyWorkspaceCleared(){
+  clearAllSteps();
+  stepIdCnt=0;dragSrc=null;kbLocked=false;
+  document.getElementById('loop-cb').checked=false;
+  ['prog-badge','kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
+  document.getElementById('sc-prog-step').textContent='';
+  visualRevision++;
+  snapshots=[];conditions=[];
+  closeCondModal();
+  renderSnapList();renderCondList();renderImgPicker();
+  setEvtPoolData({total:0,buckets:[]});
+  setProgress(null,null);setProgMsg('Idle');
+}
+
 function normalizeImportedSteps(rawSteps){
   const out=[];
   (rawSteps||[]).forEach(step=>{
@@ -1189,6 +1203,10 @@ function srvWSConnect(){
     else if(msg.type==='done'){applySrvStatus({state:'idle'});setProgress(null,null);setProgMsg('✔ done');document.getElementById('prog-badge').style.display='none';}
     else if(msg.type==='error') addLog('srv','ERR '+msg.message,'cerr');
     else if(msg.type==='script_pool') setEvtPoolData(msg);
+    else if(msg.type==='workspace_cleared'){
+      applyWorkspaceCleared();
+      addLog('srv','Workspace cleared','cok');
+    }
     else if(msg.type==='visual_sync'){
       refreshSnapList();
       refreshCondList();
@@ -1655,6 +1673,7 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 
 // ── Visual Trigger ────────────────────────────────────────────
 let snapshots=[], conditions=[], vcmSnapId=null, vcmRoi=null, vcmEditCid=null;
+let visualRevision=0;
 let roiDraw={active:false,sx:0,sy:0,ex:0,ey:0};
 
 /* Snapshot pool */
@@ -1668,10 +1687,12 @@ async function takeSnapshot(){
   }catch(e){addLog('srv','SNAP error: '+e,'cerr');}
 }
 async function refreshSnapList(){
+  const revision=visualRevision;
   try{
     const r=await fetch('/visual/snapshots');
     if(!r.ok)return;
     const d=await r.json();
+    if(revision!==visualRevision)return;
     snapshots=d.snapshots||[];
     renderSnapList();
     renderImgPicker();
@@ -1855,10 +1876,12 @@ async function createCondition(){
 
 /* Condition list */
 async function refreshCondList(){
+  const revision=visualRevision;
   try{
     const r=await fetch('/visual/conditions');
     if(!r.ok)return;
     const d=await r.json();
+    if(revision!==visualRevision)return;
     conditions=d.conditions||[];
     renderCondList();
     renderImgPicker();
