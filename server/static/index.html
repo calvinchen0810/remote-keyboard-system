@@ -789,7 +789,7 @@ function renderSteps(){
         <input class="ti" value="${esc(s.evt||'HELLO')}" style="width:calc(100% - 38px)" placeholder="EVT name" oninput="updStep(${s._id},'evt',this.value)">`;
     } else if(s.type==='srv'){
       const sidOpts=[1,2,3,4,5,6].map(n=>`<option${n===s.servo_id?' selected':''}>${n}</option>`).join('');
-      params=`<select class="ti-s" style="width:28px;color:var(--amb);font-weight:bold" onchange="updStep(${s._id},'servo_id',parseInt(this.value))">${sidOpts}</select>
+      params=`<select class="ti-s" style="width:44px;color:var(--amb);font-weight:bold" onchange="updStep(${s._id},'servo_id',parseInt(this.value))">${sidOpts}</select>
         <input class="ti pop-inp" value="${s.angle}" style="width:26px" oninput="updStep(${s._id},'angle',this.value)" onclick="event.stopPropagation();showPop(this,'ANGLE °',0,180,1,true)">°
         <input class="ti pop-inp" value="${s.speed}" style="width:24px" oninput="updStep(${s._id},'speed',this.value)" onclick="event.stopPropagation();showPop(this,'SPEED',1,100,1)">
         <input class="ti pop-inp" value="${s.duration_ms}" style="width:30px" oninput="updStep(${s._id},'duration_ms',this.value)" onclick="event.stopPropagation();showPop(this,'HOLD ms',0,10000,100)">ms
