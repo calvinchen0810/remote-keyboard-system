@@ -120,6 +120,7 @@ Open:
 - `CAMERA_HEIGHT` (default `720`)
 - `JPEG_QUALITY` (default `75`)
 - `DEFAULT_EVT_TIMEOUT_MS` (default `30000`)
+- `TESSERACT_CMD` (optional full path to `tesseract.exe`; required if OCR engine cannot be found automatically)
 
 ---
 
@@ -280,6 +281,47 @@ Bundle import behavior:
 ---
 
 ## Curl Examples
+
+### Four-digit OCR and keyboard variables
+
+1. Install the Python requirements, then install [Tesseract OCR](https://tesseract-ocr.github.io/tessdoc/Installation.html) with English (`eng`) trained data. The Python package alone does not install the OCR executable.
+2. On Windows, Tesseract is detected through PATH or the standard `Program Files/Tesseract-OCR` directory. For a custom location, set the environment variable before starting the server:
+
+```powershell
+$env:TESSERACT_CMD = 'C:\Program Files\Tesseract-OCR\tesseract.exe'
+```
+
+3. Take a SNAP and choose its **OCR** action. Select only the four-digit region, set the variable name, and use **Test OCR** to recognize fresh live camera captures. **Add Step** saves the ROI in the script. Existing OCR steps can be edited through their **ROI** button using a new SNAP.
+4. Add a KBD step, select **TYPE**, and choose the earlier OCR variable from **Variable...**, or enter `${digits}`. Add a separate KEY/ENTER step if needed.
+
+```json
+{
+  "schema_version": 3,
+  "loop": false,
+  "steps": [
+    {
+      "type": "ocr",
+      "delay_ms": 0,
+      "roi": [0.05, 0.10, 0.20, 0.08],
+      "variable": "digits",
+      "timeout_ms": 5000,
+      "stable_hits": 2
+    },
+    { "type": "kbd", "cmd_type": "TYPE", "text": "${digits}" },
+    { "type": "kbd", "cmd_type": "KEY", "key": "ENTER" }
+  ]
+}
+```
+
+- ROI coordinates are normalized `[x, y, width, height]` relative to the raw camera image. The example coordinates must be replaced using the actual SNAP selection. Changing source aspect ratio/framing requires selecting the ROI again.
+- The SNAP is only a setup reference. Runtime uses distinct captures newer than the OCR step, and the same four ASCII digits must appear in consecutive captures (default two). Invalid results reset the agreement count; no arbitrary substring extraction or letter-to-digit guessing is used.
+- Results are strings, preserving `0037`. Variable names use letters, digits and underscores, cannot start with a digit, and are at most 32 characters.
+- Variables belong only to the current script iteration. OCR clears its target before recognition; every loop starts empty. Undefined/malformed `${name}` placeholders abort before keyboard transmission. Substitution applies only to structured KBD TYPE `text`, not raw `cmd`, KEY, COMBO or mouse commands.
+- OCR timeout or engine failure aborts the current script; the FIFO runner then advances to the next job. Stop/clear cancels waiting OCR without typing a late result. A cancelled background Tesseract call may finish its bounded timeout, but cannot submit keyboard commands.
+- OCR steps export/import with all settings inline and do not require their setup SNAP. They may coexist with image-condition bundles. Older script formats remain supported; schema version 3 identifies OCR exports.
+- `POST /visual/ocr/test` accepts the OCR settings object and returns `{ "ok": true, "variable": "digits", "value": "0037" }`. It does not change script variables. Invalid settings return 422, missing OCR dependencies return 503, and recognition timeout returns 408.
+- PyInstaller includes the Python wrapper via the spec, but Tesseract executable, its DLLs and `tessdata/eng.traineddata` are external prerequisites. Install them on the target PC and configure `TESSERACT_CMD`; a Python-only install or EXE build is not enough. Existing non-OCR functions remain available without the engine.
+- Real capture-card text needs calibration/testing. Whitelisting and agreement checks reduce malformed readings but do not guarantee OCR accuracy.
 
 ### Run script (basic or bundle)
 
@@ -457,4 +499,5 @@ curl.exe http://127.0.0.1:8000/script/status
 - `python tools/test_evt_flow.py`
 - `server/env/Scripts/python.exe -m unittest discover -s tools -p test_clear_command.py -v`
 - `node --test tools/test_script_editor.cjs`
+- `server/env/Scripts/python.exe -m unittest discover -s tools -p test_ocr_digits.py -v`
 - `powershell -ExecutionPolicy Bypass -File .\tools\send_event.ps1`

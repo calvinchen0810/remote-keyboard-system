@@ -39,9 +39,10 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from keyboard_serial import KeyboardSerial
+from ocr_digits import OcrConfig, OcrUnavailable, ensure_available, expand_variables, read_stable_digits
 from servo_router import create_servo_router
 
 logging.basicConfig(
@@ -1143,7 +1144,7 @@ class ConnectRequest(BaseModel):
 
 # ── 混合腳本步驟 ──────────────────────────────────────────────
 class MixedStep(BaseModel):
-    type:        str              = Field(..., pattern="^(srv|kbd|mse|evt)$")
+    type:        str              = Field(..., pattern="^(srv|kbd|mse|evt|ocr)$")
     delay_ms:    int              = Field(0,   ge=0)
     evt:         Optional[str]    = None   # EVT step name; legacy non-EVT steps are normalized on input
     # SRV
@@ -1165,6 +1166,16 @@ class MixedStep(BaseModel):
     x:           Optional[int]   = None
     y:           Optional[int]   = None
     amount:      Optional[int]   = None
+    roi:         Optional[list[float]] = None
+    variable:    str = Field(default="digits", pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,31}$")
+    timeout_ms:  int = Field(default=5000, ge=100, le=60000)
+    stable_hits: int = Field(default=2, ge=1, le=10)
+
+    @model_validator(mode="after")
+    def validate_ocr(self):
+        if self.type == "ocr":
+            OcrConfig.model_validate(self.model_dump())
+        return self
 
 class MixedScriptRequest(BaseModel):
     steps:       list[MixedStep] = Field(default_factory=list, max_length=200)
@@ -1174,11 +1185,38 @@ class MixedScriptRequest(BaseModel):
     servos:      dict[str, int]  = Field(default_factory=dict)
     attach_cmds: list[str]       = Field(default_factory=list)
 
+class ScriptBundleSnapshot(BaseModel):
+    snapshot_id: str
+    jpeg_b64: str
+
+
+class ScriptBundleCondition(BaseModel):
+    condition_id: str
+    name: str
+    snapshot_id: str
+    roi: list
+    threshold: float = Field(default=0.92, ge=0.5, le=1.0)
+    min_hits: int = Field(default=3, ge=1, le=30)
+    cooldown_ms: int = Field(default=3000, ge=100, le=60000)
+
+
+class ScriptImgBundle(BaseModel):
+    conditions: list[ScriptBundleCondition] = Field(default_factory=list)
+    snapshots: list[ScriptBundleSnapshot] = Field(default_factory=list)
+
+
+class ScriptBundleImportRequest(BaseModel):
+    loop: bool = False
+    servos: dict[str, int] = Field(default_factory=dict)
+    attach_cmds: list[str] = Field(default_factory=list)
+    steps: list[MixedStep] = Field(default_factory=list, max_length=200)
+    img_bundle: ScriptImgBundle
+
 
 # ═══════════════════════════════════════════════════════════════
 #  Helper: 把步驟結構化欄位轉成協議字串
 # ═══════════════════════════════════════════════════════════════
-def _resolve_kbd_cmd(step: MixedStep) -> str:
+def _resolve_kbd_cmd(step: MixedStep, variables: Optional[dict[str, str]] = None) -> str:
     """把 KBD 步驟轉成 Pro Micro 指令字串"""
     # 1. 直接給了 cmd 字串就用它
     if step.cmd:
@@ -1192,7 +1230,7 @@ def _resolve_kbd_cmd(step: MixedStep) -> str:
     elif ct == "KEY":
         return f"KEY:{step.key or 'ENTER'}"
     else:  # TYPE
-        return f"TYPE:{step.text or ''}"
+        return "TYPE:" + expand_variables(step.text or "", variables or {})
 
 def _resolve_mse_cmd(step: MixedStep) -> str:
     """把 MSE 步驟轉成 Pro Micro 指令字串"""
@@ -1282,6 +1320,7 @@ async def _run_mixed_script(req: MixedScriptRequest):
     iteration = 0
     try:
         while True:
+            variables: dict[str, str] = {}
             for i, step in enumerate(req.steps):
                 # 進度廣播
                 await kbm_ws.broadcast({
@@ -1313,7 +1352,14 @@ async def _run_mixed_script(req: MixedScriptRequest):
                     continue
 
                 # 執行
-                if step.type == "srv":
+                if step.type == "ocr":
+                    variables.pop(step.variable, None)
+                    config = OcrConfig.model_validate(step.model_dump())
+                    variables[step.variable] = await read_stable_digits(config, frame_buffer)
+                    await kbm_ws.broadcast({"type": "ocr_result", "step": i,
+                                            "variable": step.variable, "value": variables[step.variable]})
+
+                elif step.type == "srv":
                     params = {
                         "delay_ms":    0,
                         "servo_id":    step.servo_id or 1,
@@ -1343,7 +1389,7 @@ async def _run_mixed_script(req: MixedScriptRequest):
                         })
 
                 elif step.type == "kbd":
-                    cmd = _resolve_kbd_cmd(step)
+                    cmd = _resolve_kbd_cmd(step, variables)
                     logger.info(f"[STEP {i+1}/{total}] KBD {cmd}")
                     result = await loop.run_in_executor(
                         executor, kb_serial.send, cmd
@@ -1401,7 +1447,7 @@ async def _script_runner():
                 await _run_mixed_script(req)
             except Exception as exc:
                 logger.exception("Queued script failed")
-                await kbm_ws.broadcast({"type": "script_error", "message": str(exc)})
+                await kbm_ws.broadcast({"type": "script_error", "message": str(exc), "fatal": True})
                 srv_ws.broadcast_sync({"type": "status", "state": "idle"})
             finally:
                 condition_manager.activate_only(None)
@@ -1514,7 +1560,10 @@ async def script_run(request: Request):
     async with _script_control_lock:
         if "command" in payload:
             return await _clear_workspace(payload)
-        return await _submit_script(payload)
+        try:
+            return await _submit_script(payload)
+        except ValidationError as exc:
+            raise HTTPException(422, json.loads(exc.json(include_url=False))) from exc
 
 
 async def _clear_workspace(payload: dict):
@@ -2019,34 +2068,6 @@ class UpdateConditionRequest(BaseModel):
     cooldown_ms: Optional[int] = Field(default=None, ge=100, le=60000)
 
 
-class ScriptBundleSnapshot(BaseModel):
-    snapshot_id: str
-    jpeg_b64: str
-
-
-class ScriptBundleCondition(BaseModel):
-    condition_id: str
-    name: str
-    snapshot_id: str
-    roi: list
-    threshold: float = Field(default=0.92, ge=0.5, le=1.0)
-    min_hits: int = Field(default=3, ge=1, le=30)
-    cooldown_ms: int = Field(default=3000, ge=100, le=60000)
-
-
-class ScriptImgBundle(BaseModel):
-    conditions: list[ScriptBundleCondition] = Field(default_factory=list)
-    snapshots: list[ScriptBundleSnapshot] = Field(default_factory=list)
-
-
-class ScriptBundleImportRequest(BaseModel):
-    loop: bool = False
-    servos: dict[str, int] = Field(default_factory=dict)
-    attach_cmds: list[str] = Field(default_factory=list)
-    steps: list[MixedStep] = Field(default_factory=list, max_length=200)
-    img_bundle: ScriptImgBundle
-
-
 @app.post("/visual/snapshot")
 async def visual_snapshot():
     """Capture current camera frame and save to snapshot pool."""
@@ -2060,6 +2081,17 @@ async def visual_snapshot():
 @app.get("/visual/snapshots")
 async def visual_list_snapshots():
     return {"snapshots": snapshot_pool.list_all()}
+
+@app.post("/visual/ocr/test")
+async def visual_ocr_test(req: OcrConfig):
+    try:
+        ensure_available()
+        value = await read_stable_digits(req, frame_buffer)
+    except OcrUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(408, str(exc)) from exc
+    return {"ok": True, "variable": req.variable, "value": value}
 
 
 @app.delete("/visual/snapshots/{snap_id}")

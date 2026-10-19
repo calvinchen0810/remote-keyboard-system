@@ -246,9 +246,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .vcm-hdr{background:var(--card);padding:8px 12px;border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--fg2);display:flex;align-items:center;gap:8px;flex-shrink:0}
 .vcm-body{padding:10px 12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1}
 .vcm-snap-wrap{position:relative;width:100%;background:#000;border-radius:4px;overflow:hidden;flex-shrink:0}
-.vcm-snap-wrap img{display:block;width:100%;max-height:220px;object-fit:contain;user-select:none;-webkit-user-drag:none}
+.vcm-snap-wrap img{display:block;width:100%;height:auto;user-select:none;-webkit-user-drag:none}
 #vcm-roi-canvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
-#vcm-draw-canvas{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair}
+#vcm-draw-canvas{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
 .vcm-row{display:flex;align-items:center;gap:8px}
 .vcm-lbl{font-family:var(--mono);font-size:10px;color:var(--fg2);width:100px;flex-shrink:0}
 .vcm-ftr{padding:8px 12px;border-top:1px solid var(--bd);display:flex;gap:6px;justify-content:flex-end;flex-shrink:0;background:var(--card)}
@@ -414,6 +414,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   </div>
   <div id="script-tb">
     <button class="btn-a btn-sm" onclick="addSrvStep()">＋ SRV</button>
+    <button class="btn-t btn-sm" onclick="editOcrStep(null)">＋ OCR</button>
     <button class="btn-p btn-sm" onclick="addKbdStep()">＋ KBD</button>
     <button class="btn-r btn-sm" onclick="addMseStep()">＋ MSE</button>
     <button class="btn-b btn-sm" onclick="addEvtStep()">＋ EVT</button>
@@ -757,6 +758,31 @@ function addSrvStep(){
   renderSteps();
 }
 function addKbdStep(){steps.push({type:'kbd',_id:++stepIdCnt,delay_ms:getDefaultDelay(),cmd_type:'COMBO',mod1:'CTRL',mod2:'',key:'C'});renderSteps();}
+function validateOcrSettings(settings){
+  const roi=Array.isArray(settings.roi)?settings.roi.map(Number):[];
+  const variable=String(settings.variable??'digits').trim();
+  const timeout_ms=Number(settings.timeout_ms??5000),stable_hits=Number(settings.stable_hits??2);
+  if(roi.length!==4||!roi.every(Number.isFinite)||roi[0]<0||roi[1]<0||roi[2]<=0||roi[3]<=0||roi[0]+roi[2]>1.00000001||roi[1]+roi[3]>1.00000001)throw new Error('Select a valid ROI inside the image.');
+  if(!/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(variable))throw new Error('Invalid variable name.');
+  if(!Number.isInteger(timeout_ms)||timeout_ms<100||timeout_ms>60000)throw new Error('Timeout must be 100-60000 ms.');
+  if(!Number.isInteger(stable_hits)||stable_hits<1||stable_hits>10)throw new Error('Stable samples must be 1-10.');
+  return {roi,variable,timeout_ms,stable_hits};
+}
+function addOcrStep(settings){
+  const config=validateOcrSettings(settings);
+  steps.push({type:'ocr',_id:++stepIdCnt,delay_ms:getDefaultDelay(),...config});
+  renderSteps();
+}
+function getOcrVariables(beforeId){
+  const index=steps.findIndex(step=>step._id===beforeId);
+  return [...new Set(steps.slice(0,index<0?steps.length:index).filter(step=>step.type==='ocr').map(step=>step.variable).filter(name=>typeof name==='string'&&/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(name)))];
+}
+function insertKbdVariable(id,name){
+  const step=steps.find(item=>item._id===id);
+  if(!step||step.type!=='kbd'||step.cmd_type!=='TYPE'||!getOcrVariables(id).includes(name))return;
+  step.text=(step.text||'')+'${'+name+'}';
+  renderSteps();
+}
 function addMseStep(){steps.push({type:'mse',_id:++stepIdCnt,delay_ms:getDefaultDelay(),action:'MOVE',x:0,y:0,btn:'L',amount:3});renderSteps();}
 function addEvtStep(){steps.unshift({type:'evt',_id:++stepIdCnt,delay_ms:0,evt:'HELLO'});renderSteps();}
 function clearAllSteps(){steps=[];renderSteps();}
@@ -779,6 +805,7 @@ function applyWorkspaceCleared(){
 function normalizeImportedSteps(rawSteps){
   const out=[];
   (rawSteps||[]).forEach(step=>{
+    if(step.type==='ocr')step={...step,...validateOcrSettings(step)};
     const evtName=(step.evt||'').trim();
     if(step.type!=='evt'&&evtName){
       out.push({type:'evt',delay_ms:0,evt:evtName});
@@ -811,6 +838,13 @@ function renderSteps(){
           <input type="checkbox" ${s.home===1?'checked':''} style="accent-color:var(--grn);width:10px;height:10px" onchange="updStep(${s._id},'home',this.checked?1:0)">
           <span style="font-family:var(--mono);font-size:9px;color:var(--fg3)">H</span>
         </label>`;
+    } else if(s.type==='ocr'){
+      params=`<span style="display:inline-flex;align-items:center;gap:3px;flex-wrap:wrap;max-width:100%">
+        <input class="ti" aria-label="OCR variable" value="${esc(s.variable||'digits')}" style="width:90px" oninput="updStep(${s._id},'variable',this.value)" onchange="renderSteps()">
+        <button class="btn-t btn-sm" title="Edit OCR region" onclick="editOcrStep(${s._id})">ROI</button>
+        <input class="ti" aria-label="OCR timeout milliseconds" title="Timeout ms" type="number" min="100" max="60000" value="${s.timeout_ms??5000}" style="width:62px" oninput="updStep(${s._id},'timeout_ms',this.value)">ms
+        <input class="ti" aria-label="OCR stable samples" title="Consecutive matching captures" type="number" min="1" max="10" value="${s.stable_hits??2}" style="width:32px" oninput="updStep(${s._id},'stable_hits',this.value)">
+        <span style="font-size:9px;color:var(--fg3)">samples</span></span>`;
     } else if(s.type==='kbd'){
       const types=['COMBO','TYPE','KEY'];
       const tsel=types.map(t=>`<option${t===s.cmd_type?' selected':''}>${t}</option>`).join('');
@@ -822,12 +856,14 @@ function renderSteps(){
           <select class="ti-s" style="width:54px" onchange="updStep(${s._id},'mod2',this.value)">${mk(s.mod2)}</select>+
           <input class="ti" value="${esc(s.key||'C')}" style="width:28px;text-transform:uppercase" oninput="updStep(${s._id},'key',this.value.toUpperCase())">`;
       } else if(s.cmd_type==='TYPE'){
-        fields=`<input class="ti" value="${esc(s.text||'')}" style="width:260px;max-width:100%" oninput="updStep(${s._id},'text',this.value)">`;
+        const variables=getOcrVariables(s._id);
+        fields=`<input class="ti" value="${esc(s.text||'')}" style="width:170px;max-width:100%;min-width:0" oninput="updStep(${s._id},'text',this.value)">
+          <select class="ti-s" aria-label="Insert OCR variable" style="width:106px" onchange="insertKbdVariable(${s._id},this.value)"><option value="">Variable...</option>${variables.map(name=>`<option value="${name}">${name}</option>`).join('')}</select>`;
       } else {
         fields=`<select class="ti-s" style="width:80px" onchange="updStep(${s._id},'key',this.value)">${KBD_SPECIAL_KEYS.map(k=>`<option${k===(s.key||'ENTER')?' selected':''}>${k}</option>`).join('')}</select>`;
       }
       params=`<select class="ti-s" style="width:72px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>
-        <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px">${fields}</span>`;
+        <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px;flex-wrap:wrap;max-width:100%">${fields}</span>`;
     } else {
       const ACTS=['MOVE','MOVE_TO','CLICK','DBLCLICK','SCROLL'];
       const asel=ACTS.map(a=>`<option${a===s.action?' selected':''}>${a}</option>`).join('');
@@ -844,7 +880,8 @@ function renderSteps(){
       params=`<select class="ti-s" style="width:84px" onchange="updStepMse(${s._id},this.value)">${asel}</select>
         <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px">${fields}</span>`;
     }
-    const badge=s.type==='srv'?'<span class="badge b-srv">SRV</span>':
+        const badge=s.type==='ocr'?'<span class="badge b-img">OCR</span>':
+          s.type==='srv'?'<span class="badge b-srv">SRV</span>':
           s.type==='kbd'?'<span class="badge b-kbd">KBD</span>':
           s.type==='mse'?'<span class="badge b-mse">MSE</span>':
           (s.type==='evt'&&(s.evt||'').startsWith('IMG.MATCH.'))?'<span class="badge b-img">IMG</span>':
@@ -862,7 +899,7 @@ function renderSteps(){
     tb.appendChild(tr);
   });
 }
-function updStep(id,key,val){const s=steps.find(x=>x._id===id);if(!s)return;const nk=['delay_ms','servo_id','angle','speed','duration_ms','home','x','y','amount'];s[key]=nk.includes(key)?parseInt(val)||0:val;}
+function updStep(id,key,val){const s=steps.find(x=>x._id===id);if(!s)return;const nk=['delay_ms','servo_id','angle','speed','duration_ms','home','x','y','amount','timeout_ms','stable_hits'];s[key]=nk.includes(key)?parseInt(val)||0:val;}
 function updStepKbd(id,t){
   const s=steps.find(x=>x._id===id);
   if(!s)return;
@@ -911,7 +948,7 @@ function exportJSON(){
     .map(([sid,pin])=>`ATTACH ${sid} ${pin}`);
   const img=collectImgBundle();
   const payload={
-    schema_version:img.bundle.conditions.length?2:1,
+    schema_version:out.some(step=>step.type==='ocr')?3:(img.bundle.conditions.length?2:1),
     loop:document.getElementById('loop-cb').checked,
     servos:attachedMap,
     attach_cmds:attachCmds,
@@ -1262,6 +1299,13 @@ function kbmWSConnect(){
       document.getElementById('kb-lock-msg').style.display='none';
     } else if(msg.type==='script_error'){
       addLog('kbm','✘ '+msg.message,'cerr');
+      if(msg.fatal){
+        kbLocked=false;
+        ['prog-badge','kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
+        setProgMsg(msg.message||'Script failed');
+      }
+    } else if(msg.type==='ocr_result'){
+      addLog('kbm',`OCR ${msg.variable} = ${msg.value}`,'cok');
     } else if(msg.type==='script_pool'){
       setEvtPoolData(msg);
     } else if(msg.type==='script_pool_released'){
@@ -1674,6 +1718,7 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 // ── Visual Trigger ────────────────────────────────────────────
 let snapshots=[], conditions=[], vcmSnapId=null, vcmRoi=null, vcmEditCid=null;
 let visualRevision=0;
+let vcmOcrStepId=null,ocrTestRevision=0,ocrTestController=null;
 let roiDraw={active:false,sx:0,sy:0,ex:0,ey:0};
 
 /* Snapshot pool */
@@ -1706,6 +1751,7 @@ function renderSnapList(){
       <img class="snap-thumb" src="data:image/jpeg;base64,${s.thumb_b64}" alt="${s.id}" title="${s.id}">
       <span class="snap-id">${s.id}</span>
       <button class="btn-t btn-sm" onclick="openCondModal('${s.id}')" title="Create condition from this snapshot">＋ Cond</button>
+      <button class="btn-t btn-sm" onclick="openOcrModal('${s.id}')" title="Select four-digit OCR region">OCR</button>
       <button class="del-btn" onclick="deleteSnapshot('${s.id}')" title="Delete snapshot">✕</button>
     </div>`).join('');
 }
@@ -1716,6 +1762,7 @@ async function deleteSnapshot(id){
 
 /* Condition modal + ROI drawing */
 function openCondModal(snapId){
+  setRoiModalMode(false);
   vcmSnapId=snapId;
   vcmEditCid=null;
   vcmRoi=null;
@@ -1740,6 +1787,7 @@ function openCondModalEdit(cidEnc){
   const cid=decodeURIComponent(cidEnc);
   const cond=conditions.find(c=>c.condition_id===cid);
   if(!cond){addLog('srv','Condition not found','cerr');return;}
+  setRoiModalMode(false);
   const snap=snapshots.find(s=>s.id===cond.snapshot_id);
   vcmEditCid=cid;
   vcmSnapId=cond.snapshot_id;
@@ -1765,10 +1813,86 @@ function openCondModalEdit(cidEnc){
   document.getElementById('vcModal').classList.add('open');
 }
 function closeCondModal(){
+  ocrTestRevision++;
+  if(ocrTestController)ocrTestController.abort();
+  ocrTestController=null;vcmOcrStepId=null;
+  document.getElementById('vcm-ocr-test').disabled=false;
   document.getElementById('vcModal').classList.remove('open');
   vcmSnapId=null;
   vcmRoi=null;
   vcmEditCid=null;
+}
+function setRoiModalMode(ocr){
+  ocrTestRevision++;
+  if(ocrTestController)ocrTestController.abort();
+  ocrTestController=null;vcmOcrStepId=null;
+  document.querySelectorAll('[data-condition-setting]').forEach(el=>el.style.display=ocr?'none':'');
+  document.getElementById('vcm-ocr-options').hidden=!ocr;
+  document.getElementById('vcm-ocr-test').hidden=!ocr;
+  document.getElementById('vcm-ocr-test').disabled=false;
+  document.getElementById('vcm-ocr-result').textContent='';
+  document.getElementById('vcm-name-label').textContent=ocr?'Variable':'Name';
+  document.getElementById('vcm-name').placeholder=ocr?'digits':'condition name';
+  document.getElementById('vcm-name').setAttribute('aria-label',ocr?'OCR variable':'Condition name');
+}
+function openOcrModal(snapId,stepId=null){
+  if(!snapshots.some(snap=>snap.id===snapId))return;
+  openCondModal(snapId);
+  setRoiModalMode(true);
+  vcmOcrStepId=stepId;
+  const step=steps.find(item=>item._id===stepId&&item.type==='ocr');
+  document.getElementById('vcm-name').value=step?.variable||'digits';
+  document.getElementById('vcm-ocr-timeout').value=step?.timeout_ms??5000;
+  document.getElementById('vcm-ocr-stable').value=step?.stable_hits??2;
+  document.getElementById('vcm-modal-title').textContent=step?'// Edit OCR Region':'// Four-Digit OCR';
+  document.getElementById('vcm-submit-btn').textContent=step?'Save':'Add Step';
+  document.getElementById('vcm-submit-btn').onclick=saveOcrSettings;
+  vcmRoi=step?.roi?[...step.roi]:null;
+  document.getElementById('vcm-roi-hint').style.display=vcmRoi?'none':'';
+  document.getElementById('vcm-snap-img').onload=()=>{syncDrawCanvas();if(vcmRoi)drawSavedRoi(vcmRoi);};
+  if(document.getElementById('vcm-snap-img').complete&&vcmRoi){syncDrawCanvas();drawSavedRoi(vcmRoi);}
+}
+async function editOcrStep(id){
+  if(!snapshots.length)await takeSnapshot();
+  if(!snapshots.length){addLog('srv','OCR needs a SNAP to select the region','cerr');return;}
+  openOcrModal(snapshots[snapshots.length-1].id,id);
+}
+function ocrModalSettings(){
+  return validateOcrSettings({roi:vcmRoi,variable:document.getElementById('vcm-name').value,
+    timeout_ms:document.getElementById('vcm-ocr-timeout').value,
+    stable_hits:document.getElementById('vcm-ocr-stable').value});
+}
+function saveOcrSettings(){
+  try{
+    const config=ocrModalSettings();
+    if(vcmOcrStepId!==null){
+      const step=steps.find(item=>item._id===vcmOcrStepId&&item.type==='ocr');
+      if(!step)throw new Error('OCR step no longer exists.');
+      Object.assign(step,config);renderSteps();
+    } else addOcrStep(config);
+    closeCondModal();
+  }catch(error){alert(error.message);}
+}
+async function testOcrRegion(){
+  const output=document.getElementById('vcm-ocr-result');
+  const button=document.getElementById('vcm-ocr-test');
+  const revision=++ocrTestRevision;
+  if(ocrTestController)ocrTestController.abort();
+  ocrTestController=new AbortController();
+  try{
+    const config=ocrModalSettings();
+    button.disabled=true;output.textContent='Recognizing...';
+    const response=await fetch('/visual/ocr/test',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(config),signal:ocrTestController.signal});
+    const data=await response.json();
+    if(revision!==ocrTestRevision)return;
+    if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'OCR settings rejected');
+    output.textContent=data.variable+' = '+data.value;
+  }catch(error){
+    if(revision===ocrTestRevision&&error.name!=='AbortError')output.textContent=error.message;
+  }finally{
+    if(revision===ocrTestRevision){button.disabled=false;ocrTestController=null;}
+  }
 }
 function syncDrawCanvas(){
   const wrap=document.getElementById('vcm-snap-wrap');
@@ -1795,21 +1919,23 @@ function drawSavedRoi(roi){
 function roiMouseDown(e){
   const dc=document.getElementById('vcm-draw-canvas');
   const rect=dc.getBoundingClientRect();
+  if(e.pointerId!=null)dc.setPointerCapture(e.pointerId);
   roiDraw.active=true;
-  roiDraw.sx=(e.clientX-rect.left)/rect.width;
-  roiDraw.sy=(e.clientY-rect.top)/rect.height;
+  roiDraw.sx=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+  roiDraw.sy=Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height));
   roiDraw.ex=roiDraw.sx;roiDraw.ey=roiDraw.sy;
 }
 function roiMouseMove(e){
   if(!roiDraw.active)return;
   const dc=document.getElementById('vcm-draw-canvas');
   const rect=dc.getBoundingClientRect();
-  roiDraw.ex=(e.clientX-rect.left)/rect.width;
-  roiDraw.ey=(e.clientY-rect.top)/rect.height;
+  roiDraw.ex=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+  roiDraw.ey=Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height));
   drawRoiOverlay();
 }
 function roiMouseUp(e){
   if(!roiDraw.active)return;
+  roiMouseMove(e);
   roiDraw.active=false;
   const rx=Math.min(roiDraw.sx,roiDraw.ex);
   const ry=Math.min(roiDraw.sy,roiDraw.ey);
@@ -2023,31 +2149,43 @@ addLog('kbm','RKS v4 ready','cdim');
         <img id="vcm-snap-img" src="" alt="snapshot" draggable="false">
         <canvas id="vcm-roi-canvas"></canvas>
         <canvas id="vcm-draw-canvas"
-          onmousedown="roiMouseDown(event)"
-          onmousemove="roiMouseMove(event)"
-          onmouseup="roiMouseUp(event)"
-          onmouseleave="roiMouseUp(event)"></canvas>
+          onpointerdown="roiMouseDown(event)"
+          onpointermove="roiMouseMove(event)"
+          onpointerup="roiMouseUp(event)"
+          onpointercancel="roiDraw.active=false"></canvas>
       </div>
       <div class="vcm-row">
-        <span class="vcm-lbl">Name</span>
+        <span class="vcm-lbl" id="vcm-name-label">Name</span>
         <input type="text" id="vcm-name" class="pop-inp" style="flex:1" placeholder="condition name">
       </div>
-      <div class="vcm-row">
+      <div class="vcm-row" data-condition-setting>
         <span class="vcm-lbl">Threshold <span id="vcm-thr-val" style="color:var(--tel)">0.92</span></span>
         <input type="range" id="vcm-thr" min="50" max="99" value="92" style="flex:1"
           oninput="document.getElementById('vcm-thr-val').textContent=(this.value/100).toFixed(2)">
       </div>
-      <div class="vcm-row">
+      <div class="vcm-row" data-condition-setting>
         <span class="vcm-lbl">Min Hits</span>
         <input type="number" id="vcm-hits" class="pop-inp" value="3" min="1" max="30" style="width:60px">
       </div>
-      <div class="vcm-row">
+      <div class="vcm-row" data-condition-setting>
         <span class="vcm-lbl">Cooldown ms</span>
         <input type="number" id="vcm-cool" class="pop-inp" value="3000" min="100" max="60000" step="500" style="width:80px">
       </div>
       <div id="vcm-roi-hint" class="vcm-hint" style="color:var(--amb)">⚠ Draw an ROI on the image above.</div>
+      <div id="vcm-ocr-options" hidden>
+        <div class="vcm-row">
+          <label class="vcm-lbl" for="vcm-ocr-timeout">Timeout ms</label>
+          <input type="number" id="vcm-ocr-timeout" class="pop-inp" value="5000" min="100" max="60000" step="100" style="width:90px">
+        </div>
+        <div class="vcm-row">
+          <label class="vcm-lbl" for="vcm-ocr-stable">Stable Samples</label>
+          <input type="number" id="vcm-ocr-stable" class="pop-inp" value="2" min="1" max="10" style="width:60px">
+        </div>
+      </div>
+      <div id="vcm-ocr-result" role="status" aria-live="polite" style="font-family:var(--mono);font-size:11px;overflow-wrap:anywhere"></div>
     </div>
     <div class="vcm-ftr">
+      <button class="btn-t" id="vcm-ocr-test" onclick="testOcrRegion()" hidden>Test OCR</button>
       <button class="btn-sm" onclick="closeCondModal()">Cancel</button>
       <button class="btn-t" id="vcm-submit-btn" onclick="createCondition()">Create</button>
     </div>

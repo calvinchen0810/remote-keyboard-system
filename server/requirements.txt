@@ -4,3 +4,4 @@ pyserial==3.5
 opencv-python==4.10.0.84
 cv2-enumerate-cameras==1.4.0
 python-multipart==0.0.9
+pytesseract==0.3.13
