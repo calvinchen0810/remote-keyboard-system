@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from collections import deque
-from typing import Optional, Any
+from typing import Optional, Any, Callable
 
 import base64
 import dataclasses
@@ -483,9 +483,12 @@ class EventBus:
     def _match(self, expected: str, actual: str) -> bool:
         return self._normalize(expected) == self._normalize(actual)
 
-    async def emit(self, event_line: str):
+    async def emit(self, event_line: str, guard: Optional[Callable[[], bool]] = None) -> bool:
         async with self._lock:
+            if guard is not None and not guard():
+                return False
             self._events.append(event_line)
+            return True
 
     async def clear(self):
         async with self._lock:
@@ -784,12 +787,18 @@ async def _release_pending_scripts(evt: str, source: str):
 async def _emit_event_and_release(
     evt: str, condition: Optional[MatchCondition] = None, runtime: Optional[ConditionRuntime] = None
 ) -> bool:
-    async with _script_control_lock:
-        if condition is not None and (runtime is None or not condition_manager.is_current(condition, runtime)):
-            return False
-        await event_bus.emit(evt)
-        await _release_pending_scripts(evt, source="event")
+    guard = None
+    if condition is not None:
+        guard = lambda: runtime is not None and condition_manager.is_current(condition, runtime)
+    if not await event_bus.emit(evt, guard=guard):
+        return False
+    if await pending_evt_pool.peek(evt) is None:
         return True
+    async with _script_control_lock:
+        if guard is not None and not guard():
+            return True
+        await _release_pending_scripts(evt, source="event")
+    return True
 
 
 def _probe_serial_port(port: str, baud: int, probe_cmd: str, ok_prefixes: tuple[str, ...]) -> bool:
