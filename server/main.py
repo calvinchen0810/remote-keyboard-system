@@ -151,6 +151,7 @@ class FrameBuffer:
     def __init__(self, capture_fps: int = 15):
         self._lock = threading.Lock()
         self._frame: Optional[Any] = None  # latest BGR numpy array
+        self._generation = 0
         self._capture_fps = capture_fps
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -185,12 +186,22 @@ class FrameBuffer:
             if ret:
                 with self._lock:
                     self._frame = frame
+                    self._generation += 1
             time.sleep(interval)
 
     def read(self) -> Optional[Any]:
         """Return a copy of the latest BGR frame, or None if camera not yet ready."""
         with self._lock:
             return None if self._frame is None else self._frame.copy()
+
+    @property
+    def generation(self) -> int:
+        with self._lock:
+            return self._generation
+
+    def read_sample(self) -> tuple[Optional[Any], int]:
+        with self._lock:
+            return (None if self._frame is None else self._frame.copy(), self._generation)
 
 
 # ── SnapshotPool ──────────────────────────────────────────────
@@ -284,6 +295,7 @@ class MatchCondition:
 @dataclasses.dataclass
 class ConditionRuntime:
     consecutive_hits: int = 0
+    last_frame_generation: int = -1
     last_fired_at: float = 0.0
     cooldown_until: float = 0.0
     prev_matched: bool = False
@@ -297,6 +309,7 @@ class ConditionManager:
         self._lock = threading.Lock()
         self._conditions: dict = {}  # cid -> MatchCondition
         self._runtime: dict = {}     # cid -> ConditionRuntime
+        self._script_conditions: Optional[set[str]] = None
         self._load()
 
     def _persist_path(self) -> str:
@@ -363,9 +376,30 @@ class ConditionManager:
 
     def arm(self, cid: str):
         with self._lock:
+            if self._script_conditions is not None and cid not in self._script_conditions:
+                return
             if cid in self._conditions:
                 self._conditions[cid].enabled = True
-                self._runtime[cid] = ConditionRuntime()
+                self._runtime[cid] = ConditionRuntime(last_frame_generation=frame_buffer.generation)
+
+    def activate_only(self, condition_ids: Optional[list[str]], frame_generation: Optional[int] = None):
+        with self._lock:
+            self._script_conditions = None if condition_ids is None else set(condition_ids)
+            for cid, condition in self._conditions.items():
+                condition.enabled = self._script_conditions is not None and cid in self._script_conditions
+                if condition.enabled:
+                    generation = frame_buffer.generation if frame_generation is None else frame_generation
+                    self._runtime[cid] = ConditionRuntime(last_frame_generation=generation)
+
+    def is_current(self, condition: MatchCondition, runtime: ConditionRuntime) -> bool:
+        with self._lock:
+            cid = condition.condition_id
+            return (
+                self._conditions.get(cid) is condition
+                and condition.enabled
+                and self._runtime.get(cid) is runtime
+                and (self._script_conditions is None or cid in self._script_conditions)
+            )
 
     def disarm(self, cid: str):
         with self._lock:
@@ -409,6 +443,7 @@ class ConditionManager:
             count = len(self._conditions)
             self._conditions.clear()
             self._runtime.clear()
+            self._script_conditions = None
             return count
 
     def get_armed(self) -> list:
@@ -454,6 +489,11 @@ class EventBus:
     async def clear(self):
         async with self._lock:
             self._events.clear()
+
+    async def clear_visual(self):
+        async with self._lock:
+            self._events = deque(event for event in self._events
+                                 if not self._normalize(event).startswith("IMG.MATCH."))
 
     async def consume_if_available(self, expected: str) -> Optional[str]:
         async with self._lock:
@@ -740,9 +780,15 @@ async def _release_pending_scripts(evt: str, source: str):
     return released_cnt
 
 
-async def _emit_event_and_release(evt: str):
-    await event_bus.emit(evt)
-    await _release_pending_for_event(evt, source="event")
+async def _emit_event_and_release(
+    evt: str, condition: Optional[MatchCondition] = None, runtime: Optional[ConditionRuntime] = None
+) -> bool:
+    async with _script_control_lock:
+        if condition is not None and (runtime is None or not condition_manager.is_current(condition, runtime)):
+            return False
+        await event_bus.emit(evt)
+        await _release_pending_scripts(evt, source="event")
+        return True
 
 
 def _probe_serial_port(port: str, baud: int, probe_cmd: str, ok_prefixes: tuple[str, ...]) -> bool:
@@ -918,8 +964,17 @@ async def _auto_connect_serial_devices():
 
 
 # ── Visual Monitor ────────────────────────────────────────────
-async def _eval_condition(cond: MatchCondition, rt: ConditionRuntime, frame: Any, fw: int, fh: int):
+async def _eval_condition(
+    cond: MatchCondition, rt: ConditionRuntime, frame: Any, fw: int, fh: int,
+    frame_generation: Optional[int] = None,
+):
     """Run template match for one condition against current frame; fire EVT on edge trigger."""
+    if not condition_manager.is_current(cond, rt):
+        return
+    if frame_generation is not None:
+        if frame_generation <= rt.last_frame_generation:
+            return
+        rt.last_frame_generation = frame_generation
     snap = snapshot_pool.get(cond.snapshot_id)
     if snap is None:
         return
@@ -976,7 +1031,8 @@ async def _eval_condition(cond: MatchCondition, rt: ConditionRuntime, frame: Any
         condition_manager.update_runtime(cond.condition_id, rt)
         evt = f"IMG.MATCH.{cond.condition_id}"
         logger.info(f"[IMG] MATCH fired: evt={evt}  score={score:.3f}  condition='{cond.name}'")
-        await _emit_event_and_release(evt)
+        if not await _emit_event_and_release(evt, cond, rt):
+            return
         msg = {"type": "visual_fire", "condition_id": cond.condition_id, "evt": evt, "score": round(score, 3)}
         await kbm_ws.broadcast(msg)
         await srv_ws.broadcast(msg)
@@ -991,11 +1047,11 @@ async def _visual_monitor_task():
         try:
             armed = condition_manager.get_armed()
             if armed:
-                frame = frame_buffer.read()
+                frame, generation = frame_buffer.read_sample()
                 if frame is not None:
                     fh, fw = frame.shape[:2]
                     for cond, rt in armed:
-                        await _eval_condition(cond, rt, frame, fw, fh)
+                        await _eval_condition(cond, rt, frame, fw, fh, frame_generation=generation)
         except Exception as exc:
             logger.exception(f"Visual monitor error: {exc}")
         await asyncio.sleep(1.0 / 3)  # ~3 fps polling
@@ -1113,6 +1169,7 @@ class MixedStep(BaseModel):
 class MixedScriptRequest(BaseModel):
     steps:       list[MixedStep] = Field(default_factory=list, max_length=200)
     loop:        bool            = False
+    condition_ids: list[str] = Field(default_factory=list, exclude=True)
     # auto-attach: 執行前自動 attach 需要的 servo
     servos:      dict[str, int]  = Field(default_factory=dict)
     attach_cmds: list[str]       = Field(default_factory=list)
@@ -1161,10 +1218,12 @@ def _normalize_script_request(req: MixedScriptRequest) -> MixedScriptRequest:
     """Convert legacy per-step evt gates into standalone EVT steps."""
     normalized_steps: list[MixedStep] = []
     for step in req.steps:
-        evt_name = (step.evt or "").strip()
+        evt_name = EventBus._normalize(step.evt or "")
         if step.type != "evt" and evt_name:
             normalized_steps.append(MixedStep(type="evt", delay_ms=0, evt=evt_name))
             step = step.model_copy(update={"evt": None})
+        elif step.type == "evt":
+            step = step.model_copy(update={"evt": evt_name})
         normalized_steps.append(step)
     return req.model_copy(update={"steps": normalized_steps})
 
@@ -1333,9 +1392,24 @@ async def _script_runner():
         while True:
             req = await _script_queue.get()
             try:
+                await event_bus.clear_visual()
+                condition_manager.activate_only(req.condition_ids)
+                await srv_ws.broadcast({"type": "visual_sync", "reason": "script_activation",
+                                        "snapshots": len(snapshot_pool.list_all()),
+                                        "conditions": len(condition_manager.list_all())})
+                await _auto_attach_servos(req)
                 await _run_mixed_script(req)
+            except Exception as exc:
+                logger.exception("Queued script failed")
+                await kbm_ws.broadcast({"type": "script_error", "message": str(exc)})
+                srv_ws.broadcast_sync({"type": "status", "state": "idle"})
             finally:
+                condition_manager.activate_only(None)
+                await event_bus.clear_visual()
                 _script_queue.task_done()
+                await srv_ws.broadcast({"type": "visual_sync", "reason": "script_finished",
+                                        "snapshots": len(snapshot_pool.list_all()),
+                                        "conditions": len(condition_manager.list_all())})
             if _script_queue.empty():
                 break
     except asyncio.CancelledError:
@@ -1493,40 +1567,26 @@ async def _submit_script(payload: dict):
     req = MixedScriptRequest.model_validate(payload)
     req = _normalize_script_request(req)
 
+    try:
+        servo_ids = [int(servo_id) for servo_id in req.servos]
+    except ValueError as exc:
+        raise HTTPException(422, "Servo mapping IDs must be integers from 1 to 6") from exc
+    if any(servo_id < 1 or servo_id > 6 for servo_id in servo_ids):
+        raise HTTPException(422, "Servo mapping IDs must be integers from 1 to 6")
+
     if not req.steps:
         raise HTTPException(400, "steps 不能為空")
     if any(step.type == "evt" and not (step.evt or "").strip() for step in req.steps):
         raise HTTPException(400, "EVT step 需要 evt 名稱")
 
-    gate_evt = None
-    for step in req.steps:
-        if step.type == "evt":
-            gate_evt = (step.evt or "").strip()
-            if gate_evt:
-                break
+    req.condition_ids = list(dict.fromkeys([
+        *img_import_summary["condition_map"].values(),
+        *(step.evt.strip()[len("IMG.MATCH."):] for step in req.steps
+          if step.type == "evt" and (step.evt or "").strip().startswith("IMG.MATCH.")),
+    ]))
 
     if (_script_runner_task is None or _script_runner_task.done()) and _script_queue.empty():
         await event_bus.clear()
-
-    # Auto-attach servos before any pending/queue logic so it runs regardless
-    # of whether the script goes pending or is queued immediately.
-    await _auto_attach_servos(req)
-
-    if gate_evt:
-        immediate = await event_bus.consume_if_available(gate_evt)
-        if immediate is None:
-            await pending_evt_pool.hold(req)
-            await _notify_pool_snapshot()
-            return {
-                "ok": True,
-                "steps": len(req.steps),
-                "loop": req.loop,
-                "pending": True,
-                "gate_evt": gate_evt,
-                "queued": _script_queue.qsize(),
-                "img_import": img_import_summary,
-            }
-        req = PendingScriptPool._consume_gate_step(req, gate_evt)
 
     queued = await _activate_script(req)
     await _notify_pool_snapshot()
@@ -1620,13 +1680,12 @@ async def _import_script_bundle(req: "ScriptBundleImportRequest"):
             min_hits=cond.min_hits,
             cooldown_ms=cond.cooldown_ms,
         )
-        condition_manager.arm(new_cid)
         condition_map[cond.condition_id] = new_cid
 
     remapped_steps: list[dict[str, Any]] = []
     for step in req.steps:
         data = step.model_dump()
-        evt_name = (data.get("evt") or "").strip()
+        evt_name = EventBus._normalize(data.get("evt") or "")
         if evt_name.startswith("IMG.MATCH."):
             old_cid = evt_name[len("IMG.MATCH."):]
             new_cid = condition_map.get(old_cid)

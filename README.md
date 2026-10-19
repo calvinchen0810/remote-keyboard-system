@@ -165,21 +165,30 @@ service ready for script input
 - `mse`: mouse action
 - `evt`: wait for event gate
 
-### 2) Event Bus + Pending Pool
+### 2) FIFO Script Queue + Event Bus
 
-- If script starts with an event gate that is not available yet, script is held in pending pool bucket by event name
-- When event is emitted (from KBM `EVT:<name>` or visual trigger), pending scripts are released to queue
+- All submitted scripts enter one FIFO queue, including scripts with `evt` steps. Submit A, wait for its HTTP response, then submit B and C to guarantee A -> B -> C order. Concurrent HTTP requests are ordered by server lock acquisition, not client send time.
+- An HTTP success response means imported/enqueued, not execution completed. `/script/status` reports the active runner and number of queued scripts.
+- Only the active script runs its steps and waits for its events. A waiting for an image blocks B and C even if their images are already visible.
+- New submissions no longer enter the EVT Pool. Legacy pool endpoints remain available for compatibility.
+- An EVT timeout aborts the current script and the runner advances to the next queued script, as before. A script with `loop: true` keeps its turn until stopped; `/script/stop` and the clear command also discard queued scripts.
+- Invalid servo mapping IDs are rejected before enqueueing. Unexpected per-script initialization/execution errors are reported without stranding later queued scripts.
 
 ### 3) Visual Monitor
 
 - Condition evaluates at about 3 fps
 - On match edge, emits `IMG.MATCH.<condition_id>`
 - Broadcasts visual events by websocket
+- Imported conditions stay disarmed until their script becomes active. Only that script's imported or referenced conditions can be armed during its turn; manually arming another condition during execution has no effect.
+- At every script boundary, old visual events are discarded. Active conditions receive fresh hit counts, edge state and cooldown, and are disarmed when the script finishes, times out or is cancelled.
+- If A and B use the same image, B can match the image still on screen after A completes. B must accumulate its own `min_hits` through fresh evaluations; it never reuses A's match event or runtime. Disappearance/reappearance is not required.
+- Each hit must use a distinct camera capture newer than condition activation. Re-reading one cached frame while the camera is stalled cannot satisfy `min_hits` or trigger the next script.
+- Importing identical image bundles creates independent snapshot/condition IDs. Scripts referencing the same existing condition ID also receive fresh runtime on each turn.
 
 ### 4) Auto Attach Servo in Script Mode
 
-- Before queueing/running scripts, required servo IDs are auto-attached if pin mapping exists
-- This also applies to scripts released later from pending pool
+- When a queued script becomes active, required servo IDs are auto-attached if pin mapping exists
+- Queued scripts do not attach servos ahead of their turn
 
 ---
 
@@ -263,7 +272,7 @@ service ready for script input
 Bundle import behavior:
 
 - snapshot base64 is stored into snapshot pool
-- conditions are created and auto-armed
+- conditions are created disarmed and are armed only when their queued script becomes active
 - `IMG.MATCH.<old_id>` in steps is remapped to new imported IDs
 - websocket emits visual sync event
 - if camera is not running, server auto starts camera for IMG bundle import
@@ -432,11 +441,12 @@ curl.exe http://127.0.0.1:8000/script/status
 - Replug device and confirm COM number in Device Manager
 - Use manual connect from UI if auto detect fails
 
-### Script stuck in pending
+### Script waiting or later scripts not starting
 
-- Check first `evt` step value
-- Emit corresponding `EVT:<name>` from target side
-- Inspect `GET /script/status` and `GET /script/pool/{evt}`
+- Check the active script's `evt` step value and whether its image is visible
+- For nonvisual events, emit the corresponding `EVT:<name>` from the target side
+- Inspect `GET /script/status`; queued scripts cannot bypass the active script's event wait or loop
+- Later scripts' conditions are intentionally disarmed until their turn
 
 ---
 
@@ -445,4 +455,6 @@ curl.exe http://127.0.0.1:8000/script/status
 - `python tools/test_promicro.py`
 - `python tools/test_nano_servo.py`
 - `python tools/test_evt_flow.py`
+- `server/env/Scripts/python.exe -m unittest discover -s tools -p test_clear_command.py -v`
+- `node --test tools/test_script_editor.cjs`
 - `powershell -ExecutionPolicy Bypass -File .\tools\send_event.ps1`
