@@ -16,6 +16,11 @@
 
 #include <Keyboard.h>
 #include <Mouse.h>
+#undef MOUSE_LEFT
+#undef MOUSE_RIGHT
+#undef MOUSE_MIDDLE
+#include <HID-Settings.h>
+#include <MultiReport/AbsoluteMouse.h>
 
 #define BAUD 38400
 
@@ -58,6 +63,32 @@ static uint8_t mouseBtn(char c) {
   return MOUSE_LEFT;
 }
 
+static bool parseAbsoluteCoordinate(const char *&cursor, uint16_t &coordinate) {
+  while (*cursor == ' ' || *cursor == '\t') cursor++;
+  if (*cursor < '0' || *cursor > '9') return false;
+  uint32_t value = 0;
+  while (*cursor >= '0' && *cursor <= '9') {
+    value = value * 10 + (*cursor++ - '0');
+    if (value > 32767) return false;
+  }
+  coordinate = (uint16_t)value;
+  return true;
+}
+
+static bool moveAbsolute(const char *arguments) {
+  const char *cursor = arguments;
+  uint16_t horizontal, vertical;
+  if (!parseAbsoluteCoordinate(cursor, horizontal)) return false;
+  if (*cursor != ' ' && *cursor != '\t') return false;
+  if (!parseAbsoluteCoordinate(cursor, vertical)) return false;
+  while (*cursor == ' ' || *cursor == '\t') cursor++;
+  if (*cursor) return false;
+  int16_t axisX = (int16_t)((int32_t)horizontal * 2 - 32768L);
+  int16_t axisY = (int16_t)((int32_t)vertical * 2 - 32768L);
+  AbsoluteMouse.moveTo(axisX, axisY);
+  return true;
+}
+
 static void forwardEventToController(const char *msg) {
   Serial1.print(F("EVT:"));
   Serial1.println(msg);
@@ -72,6 +103,10 @@ static bool processCommand(char *raw) {
 
   if (!strcmp(raw, "PING")) {
     Serial1.println(F("OK PONG")); Serial.println(F("[DBG] PING")); return true;
+  }
+  if (!strcmp(raw, "CAPS")) {
+    Serial1.println(F("CAPS ABS_MOUSE=1 ABS_RANGE=0..32767"));
+    return true;
   }
   if (!strcmp(raw, "RELEASEALL")) {
     Keyboard.releaseAll();
@@ -105,6 +140,7 @@ static bool processCommand(char *raw) {
     }
     delay(50); Keyboard.releaseAll(); return cnt>0;
   }
+  if (!strncmp(raw,"MOUSE:ABS ",10)) return moveAbsolute(raw + 10);
   if (!strncmp(raw,"MOUSE:MOVE ",11))    { int dx=0,dy=0; sscanf(raw+11,"%d %d",&dx,&dy); Mouse.move(constrain(dx,-127,127),constrain(dy,-127,127),0); return true; }
   if (!strncmp(raw,"MOUSE:CLICK ",12))   { Mouse.click(mouseBtn(raw[12])); return true; }
   if (!strncmp(raw,"MOUSE:DBLCLICK ",15)){ uint8_t b=mouseBtn(raw[15]); Mouse.click(b); delay(80); Mouse.click(b); return true; }

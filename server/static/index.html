@@ -228,8 +228,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 /* snap pool + conditions */
 #snap-list{overflow-y:auto}
 #cond-list{overflow-y:auto;flex:1}
-.snap-item{display:flex;align-items:center;gap:4px;padding:3px 6px;border-bottom:1px solid var(--bd)}
+.snap-item{display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:4px 6px;border-bottom:1px solid var(--bd)}
 .snap-item:last-child{border-bottom:none}
+.snap-meta{display:flex;align-items:center;gap:4px;min-width:0}
+.snap-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+.snap-actions>.btn-sm{width:100%;min-width:0;justify-content:center}
 .snap-thumb{width:44px;height:30px;object-fit:cover;border-radius:2px;border:1px solid var(--bd);flex-shrink:0;cursor:pointer}
 .snap-id{font-family:var(--mono);font-size:9px;color:var(--fg3);flex:1;overflow:hidden;text-overflow:ellipsis}
 .cond-item{padding:4px 7px;border-bottom:1px solid var(--bd)}
@@ -243,6 +246,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 #vcModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:center;justify-content:center}
 #vcModal.open{display:flex}
 #vcModal-box{background:var(--panel);border:1px solid var(--br);border-radius:6px;width:min(520px,92vw);display:flex;flex-direction:column;overflow:hidden;max-height:90vh}
+#vcModal [hidden]{display:none!important}
 .vcm-hdr{background:var(--card);padding:8px 12px;border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--fg2);display:flex;align-items:center;gap:8px;flex-shrink:0}
 .vcm-body{padding:10px 12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1}
 .vcm-snap-wrap{position:relative;width:100%;background:#000;border-radius:4px;overflow:hidden;flex-shrink:0}
@@ -784,6 +788,25 @@ function insertKbdVariable(id,name){
   renderSteps();
 }
 function addMseStep(){steps.push({type:'mse',_id:++stepIdCnt,delay_ms:getDefaultDelay(),action:'MOVE',x:0,y:0,btn:'L',amount:3});renderSteps();}
+function validateImageClickSettings(settings){
+  const common=validateOcrSettings({roi:settings.search_roi??[0,0,1,1],timeout_ms:settings.timeout_ms??5000,stable_hits:settings.stable_hits??2});
+  const source_width=Number(settings.source_width),source_height=Number(settings.source_height);
+  const threshold=Number(settings.threshold??0.92),button=settings.button??'L';
+  if(typeof settings.template_b64!=='string'||!settings.template_b64.length||settings.template_b64.length>2800000||settings.template_b64.length%4!==0||!/^[A-Za-z0-9+/]+={0,2}$/.test(settings.template_b64))throw new Error('Select an image template.');
+  if(!Number.isInteger(source_width)||!Number.isInteger(source_height)||source_width<16||source_height<16||source_width>8192||source_height>8192)throw new Error('Invalid source image dimensions.');
+  if(!Number.isFinite(threshold)||threshold<0.5||threshold>1||!['L','R','M'].includes(button))throw new Error('Invalid image-click threshold or button.');
+  return {template_b64:settings.template_b64,source_width,source_height,search_roi:common.roi,threshold,
+    timeout_ms:common.timeout_ms,stable_hits:common.stable_hits,button};
+}
+function addImageClickStep(settings,id=null){
+  const image_click=validateImageClickSettings(settings);
+  if(id!==null){
+    const step=steps.find(item=>item._id===id&&item.type==='mse');
+    if(!step)throw new Error('Mouse step no longer exists.');
+    Object.assign(step,{action:'IMAGE_CLICK',image_click});delete step.cmd;
+  } else steps.push({type:'mse',_id:++stepIdCnt,delay_ms:getDefaultDelay(),action:'IMAGE_CLICK',image_click});
+  renderSteps();
+}
 function addEvtStep(){steps.unshift({type:'evt',_id:++stepIdCnt,delay_ms:0,evt:'HELLO'});renderSteps();}
 function clearAllSteps(){steps=[];renderSteps();}
 function delStep(id){steps=steps.filter(s=>s._id!==id);renderSteps();}
@@ -806,6 +829,7 @@ function normalizeImportedSteps(rawSteps){
   const out=[];
   (rawSteps||[]).forEach(step=>{
     if(step.type==='ocr')step={...step,...validateOcrSettings(step)};
+    if(step.type==='mse'&&step.action==='IMAGE_CLICK')step={...step,image_click:validateImageClickSettings(step.image_click||{})};
     const evtName=(step.evt||'').trim();
     if(step.type!=='evt'&&evtName){
       out.push({type:'evt',delay_ms:0,evt:evtName});
@@ -865,10 +889,14 @@ function renderSteps(){
       params=`<select class="ti-s" style="width:72px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>
         <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px;flex-wrap:wrap;max-width:100%">${fields}</span>`;
     } else {
-      const ACTS=['MOVE','MOVE_TO','CLICK','DBLCLICK','SCROLL'];
+      const ACTS=['MOVE','MOVE_TO','CLICK','DBLCLICK','SCROLL','IMAGE_CLICK'];
       const asel=ACTS.map(a=>`<option${a===s.action?' selected':''}>${a}</option>`).join('');
       let fields='';
-      if(s.action==='MOVE'||s.action==='MOVE_TO'){
+      if(s.action==='IMAGE_CLICK'){
+        fields=`<button class="btn-t btn-sm" onclick="editImageClickStep(${s._id})" title="Edit image-click template and search settings">Target</button>
+          <img src="data:image/png;base64,${s.image_click?.template_b64||''}" alt="Click template" style="width:44px;height:24px;object-fit:contain">
+          <span style="font-size:10px">${s.image_click?.button||'L'} · ${s.image_click?.threshold??0.92}</span>`;
+      } else if(s.action==='MOVE'||s.action==='MOVE_TO'){
         const lb=s.action==='MOVE_TO'?['x','y']:['dx','dy'];
         fields=`<span style="color:var(--fg3);font-size:9px">${lb[0]}</span><input class="ti" value="${s.x||0}" style="width:30px" oninput="updStep(${s._id},'x',this.value)">
           <span style="color:var(--fg3);font-size:9px">${lb[1]}</span><input class="ti" value="${s.y||0}" style="width:30px" oninput="updStep(${s._id},'y',this.value)">`;
@@ -877,8 +905,8 @@ function renderSteps(){
       } else {
         fields=`<span style="color:var(--fg3);font-size:9px">amt</span><input class="ti" value="${s.amount||3}" style="width:30px" oninput="updStep(${s._id},'amount',this.value)">`;
       }
-      params=`<select class="ti-s" style="width:84px" onchange="updStepMse(${s._id},this.value)">${asel}</select>
-        <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px">${fields}</span>`;
+      params=`<select class="ti-s" style="width:116px" onchange="updStepMse(${s._id},this.value)">${asel}</select>
+        <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px;max-width:100%;flex-wrap:wrap">${fields}</span>`;
     }
         const badge=s.type==='ocr'?'<span class="badge b-img">OCR</span>':
           s.type==='srv'?'<span class="badge b-srv">SRV</span>':
@@ -907,7 +935,7 @@ function updStepKbd(id,t){
   if(t==='KEY'&&!KBD_SPECIAL_KEYS.includes(s.key))s.key='ENTER';
   renderSteps();
 }
-function updStepMse(id,t){const s=steps.find(x=>x._id===id);if(s){s.action=t;renderSteps();}}
+function updStepMse(id,t){if(t==='IMAGE_CLICK'){editImageClickStep(id);return;}const s=steps.find(x=>x._id===id);if(s){s.action=t;renderSteps();}}
 
 function collectImgBundle(){
   const conditionIds=[...new Set(
@@ -948,7 +976,7 @@ function exportJSON(){
     .map(([sid,pin])=>`ATTACH ${sid} ${pin}`);
   const img=collectImgBundle();
   const payload={
-    schema_version:out.some(step=>step.type==='ocr')?3:(img.bundle.conditions.length?2:1),
+    schema_version:out.some(step=>step.type==='mse'&&step.action==='IMAGE_CLICK')?4:(out.some(step=>step.type==='ocr')?3:(img.bundle.conditions.length?2:1)),
     loop:document.getElementById('loop-cb').checked,
     servos:attachedMap,
     attach_cmds:attachCmds,
@@ -1306,6 +1334,8 @@ function kbmWSConnect(){
       }
     } else if(msg.type==='ocr_result'){
       addLog('kbm',`OCR ${msg.variable} = ${msg.value}`,'cok');
+    } else if(msg.type==='image_click_result'){
+      addLog('kbm',`Image click (${msg.match.center.map(value=>Math.round(value)).join(', ')}) score=${msg.match.score}`,'cok');
     } else if(msg.type==='script_pool'){
       setEvtPoolData(msg);
     } else if(msg.type==='script_pool_released'){
@@ -1719,6 +1749,7 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 let snapshots=[], conditions=[], vcmSnapId=null, vcmRoi=null, vcmEditCid=null;
 let visualRevision=0;
 let vcmOcrStepId=null,ocrTestRevision=0,ocrTestController=null;
+let vcmImageMode=false,vcmImageStepId=null,vcmImageConfig=null,vcmImageDirty=false,vcmImageSelectionRevision=0;
 let roiDraw={active:false,sx:0,sy:0,ex:0,ey:0};
 
 /* Snapshot pool */
@@ -1748,11 +1779,16 @@ function renderSnapList(){
   if(!snapshots.length){el.innerHTML='<div style="font-family:var(--mono);font-size:9px;color:var(--fg3);padding:6px 8px">No snapshots</div>';return;}
   el.innerHTML=snapshots.map(s=>`
     <div class="snap-item">
-      <img class="snap-thumb" src="data:image/jpeg;base64,${s.thumb_b64}" alt="${s.id}" title="${s.id}">
-      <span class="snap-id">${s.id}</span>
-      <button class="btn-t btn-sm" onclick="openCondModal('${s.id}')" title="Create condition from this snapshot">＋ Cond</button>
-      <button class="btn-t btn-sm" onclick="openOcrModal('${s.id}')" title="Select four-digit OCR region">OCR</button>
-      <button class="del-btn" onclick="deleteSnapshot('${s.id}')" title="Delete snapshot">✕</button>
+      <div class="snap-meta">
+        <img class="snap-thumb" src="data:image/jpeg;base64,${s.thumb_b64}" alt="${s.id}" title="${s.id}">
+        <span class="snap-id">${s.id}</span>
+        <button class="del-btn" onclick="deleteSnapshot('${s.id}')" title="Delete snapshot">✕</button>
+      </div>
+      <div class="snap-actions">
+        <button class="btn-t btn-sm" onclick="openCondModal('${s.id}')" title="Create condition from this snapshot">CON</button>
+        <button class="btn-t btn-sm" onclick="openOcrModal('${s.id}')" title="Select four-digit OCR region">OCR</button>
+        <button class="btn-t btn-sm" onclick="openImageClickModal('${s.id}')" title="Select image-click target">CLK</button>
+      </div>
     </div>`).join('');
 }
 async function deleteSnapshot(id){
@@ -1816,20 +1852,31 @@ function closeCondModal(){
   ocrTestRevision++;
   if(ocrTestController)ocrTestController.abort();
   ocrTestController=null;vcmOcrStepId=null;
+  vcmImageMode=false;vcmImageStepId=null;vcmImageConfig=null;vcmImageDirty=false;
   document.getElementById('vcm-ocr-test').disabled=false;
+  document.getElementById('vcm-submit-btn').disabled=false;
   document.getElementById('vcModal').classList.remove('open');
   vcmSnapId=null;
   vcmRoi=null;
   vcmEditCid=null;
 }
-function setRoiModalMode(ocr){
+function setRoiModalMode(mode){
+  const image=mode==='image',ocr=mode===true;
   ocrTestRevision++;
   if(ocrTestController)ocrTestController.abort();
   ocrTestController=null;vcmOcrStepId=null;
-  document.querySelectorAll('[data-condition-setting]').forEach(el=>el.style.display=ocr?'none':'');
-  document.getElementById('vcm-ocr-options').hidden=!ocr;
-  document.getElementById('vcm-ocr-test').hidden=!ocr;
+  vcmImageMode=image;vcmImageStepId=null;vcmImageConfig=null;vcmImageDirty=false;
+  document.querySelectorAll('[data-condition-setting]').forEach(el=>el.style.display=(ocr||image)?'none':'');
+  document.getElementById('vcm-name-row').hidden=image;
+  document.getElementById('vcm-ocr-options').hidden=!(ocr||image);
+  document.getElementById('vcm-image-options').hidden=!image;
+  document.getElementById('vcm-image-preview').hidden=true;
+  document.getElementById('vcm-image-template').hidden=true;
+  document.getElementById('vcm-ocr-test').hidden=!(ocr||image);
+  document.getElementById('vcm-ocr-test').textContent=image?'Test Locate':'Test OCR';
+  document.getElementById('vcm-ocr-test').onclick=image?testImageClick:testOcrRegion;
   document.getElementById('vcm-ocr-test').disabled=false;
+  document.getElementById('vcm-submit-btn').disabled=false;
   document.getElementById('vcm-ocr-result').textContent='';
   document.getElementById('vcm-name-label').textContent=ocr?'Variable':'Name';
   document.getElementById('vcm-name').placeholder=ocr?'digits':'condition name';
@@ -1894,6 +1941,100 @@ async function testOcrRegion(){
     if(revision===ocrTestRevision){button.disabled=false;ocrTestController=null;}
   }
 }
+function openImageClickModal(snapId,stepId=null){
+  if(!snapshots.some(snap=>snap.id===snapId))return;
+  openCondModal(snapId);setRoiModalMode('image');vcmImageStepId=stepId;
+  const step=steps.find(item=>item._id===stepId&&item.type==='mse');
+  const config=step?.image_click?validateImageClickSettings(step.image_click):null;
+  vcmImageConfig=config;vcmImageDirty=!config;
+  document.getElementById('vcm-image-threshold').value=config?.threshold??0.92;
+  document.getElementById('vcm-image-button').value=config?.button??'L';
+  document.getElementById('vcm-ocr-timeout').value=config?.timeout_ms??5000;
+  document.getElementById('vcm-ocr-stable').value=config?.stable_hits??2;
+  (config?.search_roi||[0,0,1,1]).forEach((value,index)=>document.getElementById('vcm-search-'+index).value=value);
+  document.getElementById('vcm-modal-title').textContent='// Image Click Target';
+  document.getElementById('vcm-submit-btn').textContent=step?'Save':'Add Step';
+  document.getElementById('vcm-submit-btn').onclick=saveImageClickSettings;
+  if(config){
+    const thumbnail=document.getElementById('vcm-image-template');
+    thumbnail.src='data:image/png;base64,'+config.template_b64;thumbnail.hidden=false;
+    document.getElementById('vcm-roi-hint').style.display='none';
+  }
+}
+async function editImageClickStep(id){
+  if(!snapshots.length)await takeSnapshot();
+  if(!snapshots.length){renderSteps();addLog('srv','Take a SNAP to select a click target','cerr');return;}
+  openImageClickModal(snapshots[snapshots.length-1].id,id);
+}
+function setImageActionsBusy(busy){
+  document.getElementById('vcm-submit-btn').disabled=busy;
+  document.getElementById('vcm-ocr-test').disabled=busy;
+}
+function imageTargetChanged(){
+  vcmImageDirty=true;vcmImageSelectionRevision++;ocrTestRevision++;
+  if(ocrTestController)ocrTestController.abort();
+  ocrTestController=null;setImageActionsBusy(false);
+  document.getElementById('vcm-ocr-result').textContent='';
+  document.getElementById('vcm-image-preview').hidden=true;
+}
+async function imageClickModalSettings(signal){
+  const selectionRevision=vcmImageSelectionRevision;
+  if(vcmImageDirty||!vcmImageConfig){
+    if(!vcmRoi)throw new Error('Select the target region.');
+    const response=await fetch('/visual/image-click/template',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({snapshot_id:vcmSnapId,roi:vcmRoi}),signal});
+    const data=await response.json();
+    if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Invalid image template');
+    if(signal.aborted||selectionRevision!==vcmImageSelectionRevision)throw new DOMException('Cancelled','AbortError');
+    vcmImageConfig=data.image_click;vcmImageDirty=false;
+  }
+  return validateImageClickSettings({...vcmImageConfig,
+    search_roi:[0,1,2,3].map(index=>Number(document.getElementById('vcm-search-'+index).value)),
+    threshold:Number(document.getElementById('vcm-image-threshold').value),
+    button:document.getElementById('vcm-image-button').value,
+    timeout_ms:Number(document.getElementById('vcm-ocr-timeout').value),
+    stable_hits:Number(document.getElementById('vcm-ocr-stable').value)});
+}
+async function saveImageClickSettings(){
+  if(document.getElementById('vcm-submit-btn').disabled)return;
+  const revision=++ocrTestRevision;
+  if(ocrTestController)ocrTestController.abort();
+  ocrTestController=new AbortController();
+  setImageActionsBusy(true);
+  try{
+    const config=await imageClickModalSettings(ocrTestController.signal);
+    if(revision!==ocrTestRevision)return;
+    addImageClickStep(config,vcmImageStepId);closeCondModal();
+  }catch(error){
+    if(revision===ocrTestRevision&&error.name!=='AbortError')document.getElementById('vcm-ocr-result').textContent=error.message;
+  }finally{
+    if(revision===ocrTestRevision){setImageActionsBusy(false);ocrTestController=null;}
+  }
+}
+async function testImageClick(){
+  if(document.getElementById('vcm-ocr-test').disabled||document.getElementById('vcm-submit-btn').disabled)return;
+  const revision=++ocrTestRevision;
+  if(ocrTestController)ocrTestController.abort();
+  ocrTestController=new AbortController();
+  const button=document.getElementById('vcm-ocr-test'),output=document.getElementById('vcm-ocr-result');
+  setImageActionsBusy(true);output.textContent='Locating...';
+  document.getElementById('vcm-image-preview').hidden=true;
+  try{
+    const config=await imageClickModalSettings(ocrTestController.signal);
+    const response=await fetch('/visual/image-click/test',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(config),signal:ocrTestController.signal});
+    const data=await response.json();
+    if(revision!==ocrTestRevision)return;
+    if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Locate request rejected');
+    output.textContent=`Center (${data.match.center.map(value=>Math.round(value)).join(', ')}) · score ${data.match.score} · HID (${data.match.hid.join(', ')})`;
+    const preview=document.getElementById('vcm-image-preview');
+    preview.src='data:image/jpeg;base64,'+data.match.preview_b64;preview.hidden=false;
+  }catch(error){
+    if(revision===ocrTestRevision&&error.name!=='AbortError')output.textContent=error.message;
+  }finally{
+    if(revision===ocrTestRevision){setImageActionsBusy(false);ocrTestController=null;}
+  }
+}
 function syncDrawCanvas(){
   const wrap=document.getElementById('vcm-snap-wrap');
   const img=document.getElementById('vcm-snap-img');
@@ -1943,6 +2084,7 @@ function roiMouseUp(e){
   const rh=Math.abs(roiDraw.ey-roiDraw.sy);
   if(rw>0.01&&rh>0.01){
     vcmRoi=[rx,ry,rw,rh];
+    if(vcmImageMode)imageTargetChanged();
     document.getElementById('vcm-roi-hint').style.display='none';
   }
   drawRoiOverlay();
@@ -2154,7 +2296,7 @@ addLog('kbm','RKS v4 ready','cdim');
           onpointerup="roiMouseUp(event)"
           onpointercancel="roiDraw.active=false"></canvas>
       </div>
-      <div class="vcm-row">
+      <div class="vcm-row" id="vcm-name-row">
         <span class="vcm-lbl" id="vcm-name-label">Name</span>
         <input type="text" id="vcm-name" class="pop-inp" style="flex:1" placeholder="condition name">
       </div>
@@ -2183,6 +2325,22 @@ addLog('kbm','RKS v4 ready','cdim');
         </div>
       </div>
       <div id="vcm-ocr-result" role="status" aria-live="polite" style="font-family:var(--mono);font-size:11px;overflow-wrap:anywhere"></div>
+      <div id="vcm-image-options" hidden>
+        <div class="vcm-row">
+          <label class="vcm-lbl" for="vcm-image-threshold">Match Threshold</label>
+          <input id="vcm-image-threshold" class="pop-inp" type="number" min="0.5" max="1" step="0.01" value="0.92" style="width:80px">
+          <select id="vcm-image-button" class="ti-s" aria-label="Image click button"><option value="L">Left</option><option value="R">Right</option><option value="M">Middle</option></select>
+        </div>
+        <div class="vcm-row" style="flex-wrap:wrap">
+          <span class="vcm-lbl">Search ROI</span>
+          <input id="vcm-search-0" class="pop-inp" type="number" min="0" max="1" step="0.05" value="0" aria-label="Search left" title="Search left (0-1)" style="width:48px">
+          <input id="vcm-search-1" class="pop-inp" type="number" min="0" max="1" step="0.05" value="0" aria-label="Search top" title="Search top (0-1)" style="width:48px">
+          <input id="vcm-search-2" class="pop-inp" type="number" min="0.01" max="1" step="0.05" value="1" aria-label="Search width" title="Search width (0-1)" style="width:48px">
+          <input id="vcm-search-3" class="pop-inp" type="number" min="0.01" max="1" step="0.05" value="1" aria-label="Search height" title="Search height (0-1)" style="width:48px">
+        </div>
+      </div>
+      <img id="vcm-image-template" alt="Stored click template" hidden style="max-width:120px;max-height:64px;object-fit:contain;align-self:flex-start">
+      <img id="vcm-image-preview" alt="Located target and center" hidden style="width:100%;height:auto;flex-shrink:0">
     </div>
     <div class="vcm-ftr">
       <button class="btn-t" id="vcm-ocr-test" onclick="testOcrRegion()" hidden>Test OCR</button>

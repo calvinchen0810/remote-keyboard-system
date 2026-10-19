@@ -282,6 +282,48 @@ Bundle import behavior:
 
 ## Curl Examples
 
+### Image search and absolute click (Windows)
+
+Prerequisites: the confirmed Pro Micro `MOUSE:ABS` firmware, one Windows display, a capture-card image of the entire desktop with no borders/cropping, and matching source/capture aspect ratio. Keep the target layout stable during locate/move/click. Legacy MOVE/MOVE_TO behavior is unchanged.
+
+1. Take a SNAP and select **Click**. Draw around a distinctive target. Set threshold, stable samples, timeout and L/R/M button; **Search ROI** is normalized `[left, top, width, height]` (default full frame).
+2. **Test Locate** searches fresh captures and displays the match box, pixel center, normalized HID center and annotated image. It never moves or clicks.
+3. **Add Step** creates `MSE / IMAGE_CLICK`. Alternatively add MSE, select IMAGE_CLICK and configure the target. **Target** reopens settings; drawing a new rectangle replaces the stored template, otherwise its embedded template is preserved.
+4. Export/import or submit the JSON through `/script/run`. Schema version 4 embeds a cropped PNG, original frame dimensions and all settings in `image_click`; it does not depend on a SNAP ID or an IMG condition.
+
+```json
+{
+  "schema_version": 4,
+  "steps": [{
+    "type": "mse",
+    "action": "IMAGE_CLICK",
+    "delay_ms": 0,
+    "image_click": {
+      "template_b64": "<PNG base64 produced by SNAP selection>",
+      "source_width": 1280,
+      "source_height": 720,
+      "search_roi": [0, 0, 1, 1],
+      "threshold": 0.92,
+      "timeout_ms": 5000,
+      "stable_hits": 2,
+      "button": "L"
+    }
+  }]
+}
+```
+
+The placeholder above is explanatory, not an executable template. Use exported JSON for real runs. Each stable sample must be a distinct capture newer than step start. Multiple spatially distinct matches, a low-detail template, an aspect-ratio change or timeout aborts the current job. Narrow the search ROI instead of permitting arbitrary selection among duplicates. Only a successful `MOUSE:ABS` ACK permits the separate click; a 100ms settling interval allows cancellation. Stop/clear also prevents serial writes still queued behind the KBM lock. Commands already written to hardware cannot be recalled. Other FIFO jobs retain their order.
+
+**Windows physical acceptance:** On the controlled Windows PC, open `http://<controller-IP>:8000/static/click-target.html` and make the browser full-screen. Keep Windows in single-display mode, disable any capture-card scaling/cropping, and do not move the physical mouse during the run. The page has nine distinct visual targets and records the target, pixel coordinates and HID coordinates received from actual clicks.
+
+- Select a target from SNAP, use Test Locate, and check the preview center is inside that target.
+- Run one IMAGE_CLICK and confirm the controlled page's counter increments once and records the correct target.
+- Repeat at top-left, center and bottom-right, then at the Windows DPI settings and capture resolutions you intend to use.
+- Submit A/B/C image-click scripts and confirm target order. Test stop/clear while searching with a deliberately absent target: no later clicks or queued script actions should occur.
+- Duplicate the target on screen and confirm Test Locate rejects ambiguity; then narrow Search ROI and confirm a unique result.
+
+The page itself sends no serial commands. Browser automation/mock-frame tests verify the software path, not physical HID accuracy; actual Windows/capture-card acceptance must be observed on the controlled PC.
+
 ### Four-digit OCR and keyboard variables
 
 1. Install the Python requirements, then install [Tesseract OCR](https://tesseract-ocr.github.io/tessdoc/Installation.html) with English (`eng`) trained data. The Python package alone does not install the OCR executable.
@@ -500,4 +542,5 @@ curl.exe http://127.0.0.1:8000/script/status
 - `server/env/Scripts/python.exe -m unittest discover -s tools -p test_clear_command.py -v`
 - `node --test tools/test_script_editor.cjs`
 - `server/env/Scripts/python.exe -m unittest discover -s tools -p test_ocr_digits.py -v`
+- `server/env/Scripts/python.exe -m unittest discover -s tools -p test_image_click.py -v`
 - `powershell -ExecutionPolicy Bypass -File .\tools\send_event.ps1`

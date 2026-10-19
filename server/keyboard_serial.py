@@ -93,7 +93,7 @@ class KeyboardSerial:
         return ser.port if ser and ser.is_open else None
 
     # ── send & wait ACK ───────────────────────────────────────
-    def send(self, cmd: str, timeout: float = 1.0) -> str:
+    def send(self, cmd: str, timeout: float = 1.0, *, allow_send: Optional[Callable[[], bool]] = None) -> str:
         """
         送出指令，阻塞等待 ACK。
         回傳：'OK' | 'ERR' | 'TIMEOUT' | 'DISCONNECTED'
@@ -101,6 +101,8 @@ class KeyboardSerial:
         if not self.is_connected:
             return "DISCONNECTED"
         with self._lock:
+            if allow_send is not None and not allow_send():
+                return "CANCELLED"
             try:
                 ser = self._serial
                 if not ser or not ser.is_open:
@@ -109,6 +111,8 @@ class KeyboardSerial:
                 self._drain_ack_queue()
                 ser.reset_input_buffer()
                 outbound = cmd.strip()
+                if allow_send is not None and not allow_send():
+                    return "CANCELLED"
                 ser.write(f"{outbound}\n".encode())
                 ser.flush()
                 logger.debug(f"KBM >> {outbound}")

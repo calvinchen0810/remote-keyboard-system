@@ -42,7 +42,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from keyboard_serial import KeyboardSerial
-from ocr_digits import OcrConfig, OcrUnavailable, ensure_available, expand_variables, read_stable_digits
+from ocr_digits import OcrConfig, OcrUnavailable, crop_roi, ensure_available, expand_variables, read_stable_digits
+from image_click import AmbiguousMatch, ImageClickConfig, ImageMatch, locate_image
 from servo_router import create_servo_router
 
 logging.basicConfig(
@@ -1179,11 +1180,15 @@ class MixedStep(BaseModel):
     variable:    str = Field(default="digits", pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,31}$")
     timeout_ms:  int = Field(default=5000, ge=100, le=60000)
     stable_hits: int = Field(default=2, ge=1, le=10)
+    image_click: Optional[ImageClickConfig] = None
 
     @model_validator(mode="after")
     def validate_ocr(self):
         if self.type == "ocr":
             OcrConfig.model_validate(self.model_dump())
+        if self.type == "mse" and (self.action or "").upper() == "IMAGE_CLICK":
+            if self.image_click is None or self.cmd:
+                raise ValueError("IMAGE_CLICK requires image_click settings and cannot use a raw cmd")
         return self
 
 class MixedScriptRequest(BaseModel):
@@ -1314,6 +1319,24 @@ async def _wait_for_step_event(step: MixedStep, idx: int, total: int) -> bool:
         return False
 
 
+async def _run_image_click(config: ImageClickConfig) -> ImageMatch:
+    cancelled = threading.Event()
+    loop = asyncio.get_running_loop()
+    try:
+        result = await locate_image(config, frame_buffer)
+        commands = [f"MOUSE:ABS {result.hid[0]} {result.hid[1]}", f"MOUSE:CLICK {config.button}"]
+        for index, command in enumerate(commands):
+            if index:
+                await asyncio.sleep(0.1)
+            status = await loop.run_in_executor(executor,
+                lambda outbound=command: kb_serial.send(outbound, allow_send=lambda: not cancelled.is_set()))
+            if status != "OK":
+                raise RuntimeError(f"IMAGE_CLICK {command.split()[0]} failed: {status}; no further commands sent")
+        return result
+    finally:
+        cancelled.set()
+
+
 async def _run_mixed_script(req: MixedScriptRequest):
     """後端逐步執行混合腳本，透過 WS 推播進度"""
     loop = asyncio.get_event_loop()
@@ -1412,6 +1435,11 @@ async def _run_mixed_script(req: MixedScriptRequest):
                         })
 
                 elif step.type == "mse":
+                    if (step.action or "").upper() == "IMAGE_CLICK":
+                        result = await _run_image_click(step.image_click)
+                        await kbm_ws.broadcast({"type": "image_click_result", "step": i,
+                                                "match": result.model_dump(exclude={"preview_b64"})})
+                        continue
                     cmd = _resolve_mse_cmd(step)
                     logger.info(f"[STEP {i+1}/{total}] MSE {cmd}")
                     result = await loop.run_in_executor(
@@ -2101,6 +2129,46 @@ async def visual_ocr_test(req: OcrConfig):
     except TimeoutError as exc:
         raise HTTPException(408, str(exc)) from exc
     return {"ok": True, "variable": req.variable, "value": value}
+
+class ImageTemplateRequest(BaseModel):
+    snapshot_id: str
+    roi: list[float]
+
+    @model_validator(mode="after")
+    def validate_roi(self):
+        OcrConfig(roi=self.roi)
+        return self
+
+
+@app.post("/visual/image-click/template")
+async def image_click_template(req: ImageTemplateRequest):
+    snapshot = snapshot_pool.get(req.snapshot_id)
+    if snapshot is None:
+        raise HTTPException(404, "Snapshot not found")
+    frame = cv2.imdecode(np.frombuffer(base64.b64decode(snapshot["jpeg_b64"]), dtype=np.uint8), cv2.IMREAD_COLOR)
+    try:
+        template = crop_roi(frame, req.roi)
+        ok, encoded = cv2.imencode(".png", template)
+        if not ok:
+            raise ValueError("Cannot encode template")
+        config = ImageClickConfig(template_b64=base64.b64encode(encoded).decode(),
+                                  source_width=frame.shape[1], source_height=frame.shape[0])
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "image_click": config.model_dump()}
+
+
+@app.post("/visual/image-click/test")
+async def image_click_test(req: ImageClickConfig):
+    try:
+        result = await locate_image(req, frame_buffer, preview=True)
+    except AmbiguousMatch as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(408, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "match": result.model_dump()}
 
 
 @app.delete("/visual/snapshots/{snap_id}")
