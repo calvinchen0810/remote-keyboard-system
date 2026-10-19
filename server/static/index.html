@@ -851,9 +851,9 @@ function renderSteps(){
       let fields='';
       if(s.cmd_type==='COMBO'){
         const MODS=['','CTRL','SHIFT','ALT','WIN'];
-        const mk=cur=>MODS.map(m=>`<option value="${m==='WIN'?'GUI':m}"${(m==='WIN'?'GUI':m)===cur?' selected':''}>${m||'—'}</option>`).join('');
+        const mk=(cur,keys=MODS)=>keys.map(m=>`<option value="${m==='WIN'?'GUI':m}"${(m==='WIN'?'GUI':m)===cur?' selected':''}>${m||'—'}</option>`).join('');
         fields=`<select class="ti-s" style="width:54px" onchange="updStep(${s._id},'mod1',this.value)">${mk(s.mod1)}</select>+
-          <select class="ti-s" style="width:54px" onchange="updStep(${s._id},'mod2',this.value)">${mk(s.mod2)}</select>+
+          <select class="ti-s" style="width:54px" onchange="updStep(${s._id},'mod2',this.value)">${mk(s.mod2,[...MODS,'F10'])}</select>+
           <input class="ti" value="${esc(s.key||'C')}" style="width:28px;text-transform:uppercase" oninput="updStep(${s._id},'key',this.value.toUpperCase())">`;
       } else if(s.cmd_type==='TYPE'){
         const variables=getOcrVariables(s._id);
