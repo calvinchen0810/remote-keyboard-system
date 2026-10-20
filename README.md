@@ -171,7 +171,7 @@ service ready for script input
 - An HTTP success response means imported/enqueued, not execution completed. `/script/status` reports the active runner and number of queued scripts.
 - Only the active script runs its steps and waits for its events. A waiting for an image blocks B and C even if their images are already visible.
 - New submissions no longer enter the EVT Pool. Legacy pool endpoints remain available for compatibility.
-- The right-hand **FIFO Queue** summary replaces the obsolete EVT Pool panel. It shows Idle/Running/Waiting/Paused, the current waiting/paused event and step, and the number of later queued scripts (excluding the active job). It is read-only, not an event history or a queue editor. `/script/status.waiting` restores the active wait after reload; WebSocket transitions and status polling keep the summary current. Stop/clear resets it to Idle and zero queued.
+- The right-hand **FIFO Queue** summary replaces both the obsolete EVT Pool and duplicate Progress panel. It shows the active job name, Idle/Running/Waiting/Paused state, current step, waiting/paused event and later queued count. It is read-only, not an event history or a queue editor. `/script/status.waiting` restores the active wait after reload; WebSocket transitions and status polling keep the summary current. Detailed progress remains in Execution Status; stop/clear resets the summary to Idle and zero queued.
 - EVT/IMG gates wait indefinitely until they match. There is no automatic timeout, countdown or automatic pause; the old `DEFAULT_EVT_TIMEOUT_MS` environment setting no longer controls script waits. Later jobs remain queued while the current gate waits.
 - Use **PAUSE** / **PAUSE ACTIVE** or `POST /script/pause` to suspend the active FIFO at safe checkpoints. Current conditions are disarmed, not deleted. **RESUME** / **RESUME ACTIVE** or `POST /script/resume` continues the same step without replaying earlier KBD/SRV/MSE actions. Events buffered for the waiting gate during pause are discarded; condition hit counts/cooldown reset on resume.
 - `/script/status` includes `paused` and manual `pause` metadata with unique `pause_id`, active job, optional event/step and timestamp. `running` stays true while suspended. RESUME must echo that pause_id; missing/stale IDs, duplicate resume or no paused job return 409. WebSocket `script_paused` / `script_resumed` and status polling restore the UI after reload, while superseded polls cannot restore a stopped pause.
@@ -182,6 +182,7 @@ service ready for script input
 ### 3) Script Editor: Edit / Execution Status
 
 - **Edit** retains the local draft. **Execution Status** is a separate read-only view of submitted work and never loads steps into the draft. KBD TYPE text is shown in full (not masked), escaped as text; avoid sharing this screen if scripts contain secrets.
+- Execution Status shares Edit's compact toolbar, single-row job selector, TYPE/DELAY/PARAMS table, colored type badges and bottom progress row. Parameter values look like Edit fields but are selectable text, not disabled or interactive controls. A narrow status column replaces drag/delete controls. Only the current active step expands its condition/result/error details; queued previews and other steps stay compact. Completed/failed counts drive the progress bar, so an active event wait is not shown as completed.
 - Each `/script/run` submission returns a generated `job_id`. An optional top-level `name` (1-80 characters) appears in the job selector; unnamed jobs show a shortened ID. The backend cannot infer the filename used by curl `@file.json`. The editor's optional Name field is preserved on export/import.
 - **Follow Active** selects the active job as FIFO advances. Selecting a queued job turns follow off and previews immutable submitted steps without arming conditions, changing order or running anything. No job editing, reorder, delete, rerun or history database is provided.
 - The view highlights current/completed/failed/pending steps, loop iteration and waiting/recognition/location phase. EVT/IMG shows **no timeout**; remaining time applies only to bounded OCR/image search. It includes OCR results, IMAGE_MOVE centers/HID coordinates and condition name/ROI/score/threshold/hits; thumbnails use matching SNAP data when still available. Queued condition previews show inactive status and no borrowed live runtime from another job.
@@ -200,7 +201,7 @@ Example named request:
 - Condition evaluates at about 3 fps
 - On match edge, emits `IMG.MATCH.<condition_id>`
 - Broadcasts visual events by websocket
-- Imported conditions stay disarmed until their script becomes active. Only that script's imported or referenced conditions can be armed during its turn; manually arming another condition during execution has no effect.
+- Conditions can only be activated by the active script; there are no manual ARM/DISARM controls or API routes. **TEST** performs one frame comparison without arming continuous monitoring.
 - At every script boundary, old visual events are discarded. Active conditions receive fresh hit counts, edge state and cooldown. Manual pause disarms them while retaining the same job; resume rearms fresh runtime. Merely waiting never times out or disarms a condition. Completion/cancellation disarms them before a job ends.
 - If A and B use the same image, B can match the image still on screen after A completes. B must accumulate its own `min_hits` through fresh evaluations; it never reuses A's match event or runtime. Disappearance/reappearance is not required.
 - Each hit must use a distinct camera capture newer than condition activation. Re-reading one cached frame while the camera is stalled cannot satisfy `min_hits` or trigger the next script.
@@ -517,8 +518,6 @@ curl.exe http://127.0.0.1:8000/script/status
 - `GET /visual/conditions`
 - `PUT /visual/conditions/{cid}`
 - `DELETE /visual/conditions/{cid}`
-- `POST /visual/conditions/{cid}/arm`
-- `POST /visual/conditions/{cid}/disarm`
 - `POST /visual/conditions/{cid}/test`
 
 ---

@@ -2402,22 +2402,6 @@ async def visual_delete_condition(cid: str):
     return {"ok": True}
 
 
-@app.post("/visual/conditions/{cid}/arm")
-async def visual_arm_condition(cid: str):
-    if not condition_manager.get(cid):
-        raise HTTPException(404, "Condition not found")
-    condition_manager.arm(cid)
-    return {"ok": True, "armed": True}
-
-
-@app.post("/visual/conditions/{cid}/disarm")
-async def visual_disarm_condition(cid: str):
-    if not condition_manager.get(cid):
-        raise HTTPException(404, "Condition not found")
-    condition_manager.disarm(cid)
-    return {"ok": True, "armed": False}
-
-
 @app.post("/visual/conditions/{cid}/test")
 async def visual_test_condition(cid: str):
     """Run a single match against the current frame and return the score."""

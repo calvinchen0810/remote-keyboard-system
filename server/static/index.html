@@ -126,18 +126,26 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 #script-tabs button{background:transparent;border:0;border-bottom:2px solid transparent;color:var(--fg2);font:11px var(--mono);padding:6px 10px;cursor:pointer;border-radius:0}
 #script-tabs button[aria-selected=true]{color:var(--tel);border-bottom-color:var(--tel)}
 #script-edit-pane,#script-runtime-pane{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
-.runtime-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;border-bottom:1px solid var(--bd);flex-shrink:0;font:10px var(--mono)}
-#runtime-jobs{width:100%;height:76px;min-width:0;background:var(--inp);color:var(--fg);font:11px var(--mono);border:1px solid var(--bd);border-radius:var(--r)}
+.runtime-controls{display:flex;align-items:center;gap:4px;flex-wrap:wrap;row-gap:3px;padding:5px 7px;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--card);font:10px var(--mono)}
+#runtime-jobs{flex:1 1 132px;width:132px;height:22px;min-width:0;max-width:100%;background:var(--inp);color:var(--fg);font:11px var(--mono);border:1px solid var(--bd);border-radius:var(--r);padding:2px 3px}
 #runtime-meta{width:100%;overflow-wrap:anywhere;line-height:1.5;color:var(--fg2)}
-#runtime-content{flex:1;min-height:0;overflow:auto;padding:6px 8px;font:11px var(--mono)}
-.runtime-steps{width:100%;table-layout:fixed;border-collapse:collapse;margin-bottom:10px}
-.runtime-steps th,.runtime-steps td{border-bottom:1px solid var(--bd);padding:5px 4px;vertical-align:top;text-align:left;overflow-wrap:anywhere}
-.runtime-steps th{color:var(--fg3);font-weight:normal;font-size:10px}
-.runtime-steps tr[data-runtime-state=active]{background:rgba(45,212,191,.1)}
-.runtime-steps tr[data-runtime-state=failed]{color:var(--red)}
+#runtime-content{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;font:11px var(--mono)}
+#runtime-content .runtime-steps tbody tr{cursor:default}
+#runtime-content .runtime-steps td{overflow-wrap:anywhere}
+#runtime-content tr[data-runtime-state=active]{background:rgba(45,212,191,.1)}
+#runtime-content tr[data-runtime-state=active]>.runtime-mark-cell{box-shadow:inset 2px 0 var(--tel)}
+.runtime-mark{display:block;font-size:10px;color:var(--fg3);text-align:center}
+tr[data-runtime-state=active] .runtime-mark{color:var(--tel)}
+tr[data-runtime-state=completed] .runtime-mark{color:var(--grn)}
+tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
+.runtime-fields{display:flex;align-items:center;flex-wrap:wrap;gap:3px;min-width:0}
+.runtime-value{display:inline-flex;align-items:center;justify-content:center;min-height:22px;max-width:100%;min-width:0;padding:2px 4px;border:1px solid var(--bd);border-radius:var(--r);background:var(--inp);color:var(--fg);font:11px var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;cursor:text}
+.runtime-text{display:block;flex:1 1 80px;text-align:left;white-space:pre-wrap}
+.runtime-steps .runtime-detail-cell{padding:6px 8px 8px 18px;vertical-align:top;background:rgba(45,212,191,.04)}
 .runtime-param{font:11px var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;margin:0;color:var(--fg)}
 .runtime-result{font-size:10px;color:var(--tel);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:4px}
-.runtime-condition{padding:6px 0;border-bottom:1px solid var(--bd);line-height:1.6;overflow-wrap:anywhere}
+.runtime-condition{padding:4px 0;line-height:1.6;overflow-wrap:anywhere}
+.runtime-condition:after{content:'';display:block;clear:both}
 .runtime-condition .snap-thumb{float:left;margin:2px 7px 4px 0}
 #script-tb{display:flex;align-items:center;gap:4px;padding:5px 7px;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--card);flex-wrap:wrap;row-gap:3px}
 #script-resume-btn[hidden]{display:none}
@@ -161,19 +169,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .drag-col{color:var(--fg3);text-align:center;font-size:12px;width:14px;cursor:grab}
 .del-btn{background:none;border:none;color:var(--fg3);padding:2px 4px;font-size:13px;cursor:pointer}
 .del-btn:hover{color:var(--red)}
-#sc-prog-row{display:flex;align-items:center;gap:5px;padding:4px 7px;border-top:1px solid var(--bd);flex-shrink:0;background:var(--card)}
+#sc-prog-row,#runtime-prog-row{display:flex;align-items:center;gap:5px;padding:4px 7px;border-top:1px solid var(--bd);flex-shrink:0;background:var(--card)}
 .prog-tr{flex:1;height:3px;background:var(--inp);border-radius:2px;overflow:hidden}
 .prog-fi{height:100%;background:var(--grn);width:0%;transition:width .3s}
 
 /* right */
-.pn-nums{display:flex;align-items:baseline;gap:3px;padding:6px 10px 2px}
-.pn-cur{font-family:var(--mono);font-size:24px;color:var(--grn);line-height:1}
-.pn-sep{color:var(--fg3);font-size:13px}
-.pn-tot{font-family:var(--mono);font-size:17px;color:var(--fg2)}
-.pn-pct{font-family:var(--mono);font-size:11px;color:var(--grn2);margin-left:auto}
-.pn-trk{height:3px;background:var(--inp);margin:0 10px 4px;border-radius:2px;overflow:hidden}
-.pn-fill{height:100%;background:var(--grn);width:0%;transition:width .3s}
-.pn-msg{padding:0 10px 6px;font-family:var(--mono);font-size:9px;color:var(--blu)}
 #smon{flex:1;display:flex;flex-direction:column;min-height:0}
 .smon-tabs{display:flex;align-items:center;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--card)}
 .smon-tab{font-family:var(--mono);font-size:10px;padding:5px 10px;cursor:pointer;color:var(--fg3);border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
@@ -187,8 +187,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .cevt{color:var(--pur)}
 #man-row{display:flex;align-items:center;gap:4px;padding:4px 8px;border-top:1px solid var(--bd);flex-shrink:0}
 #quick-btns{display:flex;gap:4px;padding:5px 8px}
-#prog-badge{font-family:var(--mono);font-size:9px;color:var(--amb);border:1px solid var(--amb);padding:1px 4px;border-radius:2px;margin-left:5px;display:none;animation:pulse 1.5s infinite}
-#fifo-queue-body{padding:6px 8px;display:flex;flex-direction:column;gap:4px;max-height:130px;overflow:auto}
+#fifo-queue-body{padding:6px 8px;display:flex;flex-direction:column;gap:4px;max-height:150px;overflow:auto}
+.fifo-active{display:flex;justify-content:space-between;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:var(--fg);min-width:0}
+.fifo-active span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fifo-active-step{color:var(--blu);flex-shrink:0}
 .fifo-event{font-family:var(--mono);font-size:10px;color:var(--blu);overflow-wrap:anywhere;line-height:1.5}
 .evt-head{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:9px;color:var(--fg2)}
 .evt-bucket{border:1px solid var(--bd);border-radius:3px;padding:3px 5px;background:var(--card)}
@@ -250,11 +252,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 #cond-list{overflow-y:auto;flex:1}
 .snap-item{display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:4px 6px;border-bottom:1px solid var(--bd)}
 .snap-item:last-child{border-bottom:none}
-.snap-meta{display:flex;align-items:center;gap:4px;min-width:0}
-.snap-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
-.snap-actions>.btn-sm{width:100%;min-width:0;justify-content:center}
-.snap-thumb{width:44px;height:30px;object-fit:cover;border-radius:2px;border:1px solid var(--bd);flex-shrink:0;cursor:pointer}
-.snap-id{font-family:var(--mono);font-size:9px;color:var(--fg3);flex:1;overflow:hidden;text-overflow:ellipsis}
+.snap-meta{display:flex;align-items:center;gap:3px;min-width:0}
+.snap-actions{display:flex;align-items:center;gap:2px;flex:1;min-width:0}
+.snap-actions>.btn-sm{flex:1;min-width:0;justify-content:center;padding:1px 3px;font-size:9px}
+.snap-thumb{width:34px;height:24px;object-fit:cover;border-radius:2px;border:1px solid var(--bd);flex-shrink:0;cursor:pointer}
 .cond-item{padding:4px 7px;border-bottom:1px solid var(--bd)}
 .cond-item:last-child{border-bottom:none}
 .cond-row1{display:flex;align-items:center;gap:4px}
@@ -262,6 +263,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .cond-score{font-family:var(--mono);font-size:9px;color:var(--fg3);white-space:nowrap}
 .cond-acts{display:flex;gap:3px;margin-top:3px;flex-wrap:wrap}
 .cond-acts .btn-sm{padding:1px 4px}
+.cond-acts .del-btn{margin-left:auto}
 /* condition creation modal */
 #vcModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:center;justify-content:center}
 #vcModal.open{display:flex}
@@ -489,31 +491,22 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     <div class="runtime-controls">
       <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="runtime-follow" checked onchange="setRuntimeFollow(this.checked)">Follow Active</label>
       <button class="btn-r btn-sm" onclick="stopScript()" title="Stop the active job and discard the FIFO queue">STOP</button>
-      <button class="btn-a btn-sm" id="runtime-pause-btn" onclick="pauseScript()" title="Pause the active job, not the selected preview" disabled>PAUSE ACTIVE</button>
-      <button class="btn-a btn-sm" id="runtime-resume-btn" onclick="resumeScript()" title="Continue the active paused job, not the selected preview" disabled>RESUME ACTIVE</button>
-      <select id="runtime-jobs" size="3" aria-label="Runtime jobs" onchange="selectRuntimeJob(this.value)"></select>
+      <button class="btn-a btn-sm" id="runtime-pause-btn" onclick="pauseScript()" title="Pause the active job, not the selected preview" disabled>PAUSE</button>
+      <button class="btn-a btn-sm" id="runtime-resume-btn" onclick="resumeScript()" title="Continue the active paused job, not the selected preview" disabled>RESUME</button>
+      <select id="runtime-jobs" aria-label="Runtime jobs" onchange="selectRuntimeJob(this.value)"></select>
       <div id="runtime-meta" role="status" aria-live="polite">No active or queued scripts</div>
     </div>
     <div id="runtime-content"><div class="cdim">No active or queued scripts</div></div>
+    <div id="runtime-prog-row">
+      <span id="runtime-prog-lbl" style="font-family:var(--mono);font-size:9px;color:var(--grn);white-space:nowrap">0 / 0</span>
+      <div class="prog-tr"><div class="prog-fi" id="runtime-prog-fi"></div></div>
+      <span id="runtime-prog-step" style="font-family:var(--mono);font-size:9px;color:var(--blu);white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis"></span>
+    </div>
   </div>
 </div>
 
-<!-- RIGHT: Progress + Serial Monitor + Quick Commands -->
+<!-- RIGHT: FIFO Queue + Serial Monitor + Quick Commands -->
 <div id="right-col">
-
-  <div class="pn" style="flex-shrink:0">
-    <div class="ph">Progress</div>
-    <div class="pn-nums">
-      <span class="pn-cur" id="prog-cur">—</span>
-      <span class="pn-sep">/</span>
-      <span class="pn-tot" id="prog-tot">—</span>
-      <span id="prog-badge">RUNNING</span>
-      <span class="pn-pct" id="prog-pct"></span>
-    </div>
-    <div class="pn-trk"><div class="pn-fill" id="prog-fill"></div></div>
-    <div class="pn-msg" id="prog-msg">Idle</div>
-  </div>
-
   <div class="pn" style="flex-shrink:0">
     <div class="ph">FIFO Queue
       <span id="fifo-queue-total" title="Queued scripts excluding the active job" style="font-size:9px;color:var(--blu);margin-left:4px">0</span>
@@ -863,14 +856,14 @@ function applyWorkspaceCleared(){
   clearAllSteps();
   stepIdCnt=0;dragSrc=null;kbLocked=false;
   document.getElementById('loop-cb').checked=false;
-  ['prog-badge','kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
+  ['kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
   document.getElementById('sc-prog-step').textContent='';
   visualRevision++;
   snapshots=[];conditions=[];
   closeCondModal();
   renderSnapList();renderCondList();renderImgPicker();
   setFifoQueueData({running:false,queued:0,waiting:null,paused:false,pause:null});
-  setProgress(null,null);setProgMsg('Idle');
+  setProgress(null,null);
 }
 
 function setScriptPause(pause){
@@ -881,14 +874,10 @@ function setScriptPause(pause){
   const runtimeRetry=document.getElementById('runtime-resume-btn');
   if(runtimeRetry)runtimeRetry.disabled=!pause||!!pause.resuming;
   syncPauseControls();
-  const badge=document.getElementById('prog-badge');
-  badge.textContent=pause?'PAUSED':'RUNNING';
   if(!pause)return;
-  badge.style.display='';kbLocked=true;
+  kbLocked=true;
   document.getElementById('kb-lock-lbl').style.display='';
   document.getElementById('kb-lock-msg').style.display='';
-  const position=Number.isInteger(pause.step)?pause.step+1:'-';
-  setProgMsg(`FIFO paused: ${pause.evt?'EVT:'+pause.evt:'manual'} (${position}/${pause.total})`);
 }
 function syncPauseControls(){
   for(const id of ['script-pause-btn','runtime-pause-btn']){
@@ -948,6 +937,7 @@ function setRuntimeSnapshot(snapshot){
     if(runtimeDetailController)runtimeDetailController.abort();
   }
   runtimeState=snapshot;
+  renderFifoQueue();
   const jobs=runtimeJobs();
   if(runtimeFollow)runtimeSelectedId=snapshot.active?.job_id||jobs[0]?.job_id||null;
   else if(!jobs.some(job=>job.job_id===runtimeSelectedId))runtimeSelectedId=jobs[0]?.job_id||null;
@@ -958,6 +948,7 @@ function setRuntimeSnapshot(snapshot){
 function resetRuntimeView(){
   runtimeDetailRequest++;if(runtimeDetailController)runtimeDetailController.abort();
   runtimeState={...runtimeState,active:null,queued:[]};runtimeSelectedId=null;runtimeDetailJobId=null;
+  renderFifoQueue();
   renderRuntimeJobs();
 }
 function setRuntimeFollow(enabled){
@@ -980,6 +971,49 @@ function renderRuntimeJobs(){
   meta.textContent=selected?(selected.name||'#'+selected.job_id.slice(0,8))+' | '+selected.phase+' | '+selected.total+' steps':'No active or queued scripts';
   if(selected&&runtimeDetailJobId!==selected.job_id)document.getElementById('runtime-content').innerHTML='<div class="cdim">Loading selected job...</div>';
   if(!selected)document.getElementById('runtime-content').innerHTML='<div class="cdim">No active or queued scripts</div>';
+  if(!selected||runtimeDetailJobId!==selected.job_id)renderRuntimeProgress(null);
+}
+function runtimeValue(value,label,width=null,text=false){
+  return `<span class="runtime-value${text?' runtime-text':''}" title="${esc(label)}"${width?` style="width:${width}px"`:''}>${esc(value??'')}</span>`;
+}
+function runtimeStepFields(params){
+  const value=runtimeValue;
+  if(params.type==='kbd'){
+    if(params.cmd)return value(params.cmd,'Raw command',null,true);
+    const command=(params.cmd_type||'TYPE').toUpperCase();
+    if(command==='TYPE')return value(command,'Command type',72)+value(params.text||'','Typed text',null,true);
+    if(command==='KEY')return value(command,'Command type',72)+value(params.key||'ENTER','Key',80);
+    return value(command,'Command type',72)+value(params.mod1||'-','First modifier',54)+'<span class="cdim">+</span>'+value(params.mod2||'-','Second key',54)+'<span class="cdim">+</span>'+value(params.key||'C','Key',40);
+  }
+  if(params.type==='evt')return '<span class="cdim">wait</span>'+value(params.evt||'','Event',null,true);
+  if(params.type==='srv')return value(params.servo_id??1,'Servo ID',44)+value(params.angle??90,'Angle',34)+'<span class="cdim">&deg;</span>'+value(params.speed??60,'Speed',34)+value(params.duration_ms??300,'Hold milliseconds',44)+'<span class="cdim">ms H:</span>'+value(params.home??1,'Return home',24);
+  if(params.type==='ocr')return value(params.variable||'digits','Variable',90)+value('ROI','ROI '+JSON.stringify(params.roi||[]),36)+value(params.timeout_ms??5000,'Timeout milliseconds',62)+'<span class="cdim">ms</span>'+value(params.stable_hits??2,'Stable samples',32)+'<span class="cdim">samples</span>';
+  if(params.type==='mse'){
+    if(params.cmd)return value(params.cmd,'Raw command',null,true);
+    const action=params.action||'MOVE';
+    if(action==='IMAGE_MOVE'){
+      const config=params.image_move||{};
+      return value(action,'Mouse action',116)+value('Target','Search ROI '+JSON.stringify(config.search_roi||[0,0,1,1]),54)+value(config.threshold??0.92,'Match threshold',46);
+    }
+    if(['CLICK','DBLCLICK','DOWN','UP'].includes(action))return value(action,'Mouse action',116)+value(params.btn||'L','Mouse button',42);
+    if(action==='SCROLL')return value(action,'Mouse action',116)+value(params.amount??3,'Scroll amount',40);
+    const labels=action==='MOVE_TO'?['x','y']:['dx','dy'];
+    return value(action,'Mouse action',116)+`<span class="cdim">${labels[0]}</span>`+value(params.x??0,'Horizontal',40)+`<span class="cdim">${labels[1]}</span>`+value(params.y??0,'Vertical',40);
+  }
+  return value(runtimeStepText(params),'Parameters',null,true);
+}
+function runtimeTypeBadge(params){
+  const type=params.type==='evt'&&(params.evt||'').startsWith('IMG.MATCH.')?'img':params.type;
+  const color={srv:'b-srv',kbd:'b-kbd',mse:'b-mse',evt:'b-evt',img:'b-img',ocr:'b-img'}[type]||'b-evt';
+  return `<span class="badge ${color}">${esc((type||'').toUpperCase())}</span>`;
+}
+function renderRuntimeProgress(detail){
+  const label=document.getElementById('runtime-prog-lbl'),fill=document.getElementById('runtime-prog-fi'),step=document.getElementById('runtime-prog-step');
+  if(!label||!fill||!step)return;
+  const items=detail?.steps||[],done=items.filter(item=>['completed','failed'].includes(item.state)).length;
+  label.textContent=done+' / '+items.length;fill.style.width=(items.length?Math.round(done/items.length*100):0)+'%';
+  step.textContent=detail?(Number.isInteger(detail.current_step)?'Step '+(detail.current_step+1)+' / '+items.length+' | ':'')+detail.phase:'';
+  step.title=step.textContent;
 }
 function runtimeStepText(params){
   if(params.type==='kbd'){
@@ -1017,15 +1051,30 @@ function renderRuntimeDetail(detail){
   runtimeDetailJobId=detail.job_id;
   const remaining=detail.phase==='waiting'?' | no timeout':detail.remaining_ms==null?'':` | ${Math.ceil(detail.remaining_ms/1000)}s remaining`;
   document.getElementById('runtime-meta').textContent=(detail.name||'#'+detail.job_id.slice(0,8))+' | '+(detail.active?'Active':'Queued preview')+' | '+detail.phase+' | iteration '+((detail.iteration||0)+1)+remaining;
-  const rows=(detail.steps||[]).map((step,index)=>`<tr data-runtime-state="${esc(step.state)}"><td>${index+1}<br><span class="cdim">${esc(step.state)}</span></td><td>${esc((step.params.type||'').toUpperCase())}</td><td><div class="cdim">${Number(step.params.delay_ms||0)}ms delay</div><pre class="runtime-param">${esc(runtimeStepText(step.params))}</pre>${step.result!=null?`<div class="runtime-result">${esc(runtimeResultText(step.result))}</div>`:''}${step.error?`<div class="cerr">${esc(step.error)}</div>`:''}</td></tr>`).join('');
-  const expected=detail.pause?.evt||detail.steps?.[detail.current_step]?.params?.evt||'';
-  const conditions=(detail.conditions||[]).map(condition=>{
+  const items=detail.steps||[];
+  const currentIndex=detail.active?(Number.isInteger(detail.current_step)?detail.current_step:items.findIndex(item=>item.state==='active')):-1;
+  const expected=detail.pause?.evt||items[currentIndex]?.params?.evt||'';
+  const conditions=(detail.conditions||[]).filter(condition=>expected==='IMG.MATCH.'+condition.condition_id).map(condition=>{
     const snapshot=snapshots.find(item=>item.id===condition.snapshot_id);
     const score=condition.last_score==null?'-':Number(condition.last_score).toFixed(3);
+    const roi=(condition.roi||[]).map(value=>Number(value).toFixed(2)).join(', ');
     const current=detail.active&&['waiting','paused','resuming'].includes(detail.phase)&&expected==='IMG.MATCH.'+condition.condition_id;
-    return `<div class="runtime-condition">${snapshot?`<img class="snap-thumb" src="data:image/jpeg;base64,${snapshot.thumb_b64}" alt="Condition snapshot">`:''}<strong>${current?(detail.phase==='paused'?'Paused: ':'Waiting: '):''}${esc(condition.name||condition.condition_id)}</strong><br><span class="cdim">${esc(condition.condition_id)}</span><br>${detail.active?(condition.enabled?'ARM':'UNARM'):'Queued / inactive'} | score ${score} / ${condition.threshold??'-'} | hits ${condition.consecutive_hits??0} / ${condition.min_hits??'-'}<br>ROI ${esc(JSON.stringify(condition.roi||[]))}</div>`;
+    return `<div class="runtime-condition">${snapshot?`<img class="snap-thumb" src="data:image/jpeg;base64,${snapshot.thumb_b64}" alt="Condition snapshot">`:''}<strong>${current?(detail.phase==='paused'?'Paused: ':'Waiting: '):''}${esc(condition.name||condition.condition_id)}</strong><br>${detail.active?(condition.enabled?'ARM':'UNARM'):'Queued / inactive'} | score ${score} / ${condition.threshold??'-'} | hits ${condition.consecutive_hits??0} / ${condition.min_hits??'-'} | ROI ${esc(roi)}</div>`;
   }).join('');
-  content.innerHTML=(detail.pause?`<div class="cerr" style="margin-bottom:8px">FIFO paused: ${esc(detail.pause.message||detail.pause.evt)}</div>`:'')+`<table class="runtime-steps"><thead><tr><th style="width:70px">STEP</th><th style="width:48px">TYPE</th><th>PARAMETERS / RESULT</th></tr></thead><tbody>${rows}</tbody></table>`+conditions;
+  const marks={active:'&#9654;',completed:'&#10003;',failed:'!',pending:'&#183;'};
+  const rows=items.map((step,index)=>{
+    const row=`<tr data-runtime-state="${esc(step.state)}"${index===currentIndex?' aria-current="step"':''}><td class="runtime-mark-cell"><span class="runtime-mark" title="Step ${index+1}: ${esc(step.state)}">${marks[step.state]||'&#183;'}</span></td><td>${runtimeTypeBadge(step.params)}</td><td>${runtimeValue(step.params.delay_ms??0,String(step.params.delay_ms??0)+'ms',38)}</td><td><div class="runtime-fields">${runtimeStepFields(step.params)}</div></td></tr>`;
+    if(index!==currentIndex)return row;
+    let expanded=detail.pause?`<div class="cerr">${esc(detail.pause.message||'Manually paused')}</div>`:'';
+    if(step.result!=null)expanded+=`<div class="runtime-result">${esc(runtimeResultText(step.result))}</div>`;
+    if(step.error)expanded+=`<div class="cerr">${esc(step.error)}</div>`;
+    if(step.params.type==='ocr')expanded+=`<div class="cdim">ROI ${esc(JSON.stringify(step.params.roi||[]))}</div>`;
+    if(step.params.type==='mse'&&step.params.action==='IMAGE_MOVE')expanded+=`<pre class="runtime-param">${esc(runtimeStepText(step.params))}</pre>`;
+    expanded+=conditions;
+    return row+(expanded?`<tr data-runtime-detail="${index}"><td colspan="4" class="runtime-detail-cell">${expanded}</td></tr>`:'');
+  }).join('');
+  content.innerHTML=`<table class="stbl runtime-steps"><thead><tr><th style="width:14px"></th><th style="width:48px">TYPE</th><th style="width:52px">DELAY</th><th>PARAMS</th></tr></thead><tbody>${rows}</tbody></table>`;
+  renderRuntimeProgress(detail);
 }
 async function refreshRuntimeDetail(){
   if(scriptView!=='runtime'||!runtimeSelectedId)return;
@@ -1273,10 +1322,8 @@ async function runScript(){
   if(r.ok){
     if(d.pending){
       addLog('srv',`→ SCRIPT PENDING EVT:${d.gate_evt}  steps=${steps.length}`,'crun');
-      setProgMsg(`⌛ pending EVT:${d.gate_evt}`);
     } else {
       addLog('srv',`→ SCRIPT ENQUEUED  ${steps.length} steps  loop=${loop}  queued=${d.queued||0}`,'csnd');
-      document.getElementById('prog-badge').style.display='';
       setProgress(0,steps.length);
     }
   } else {
@@ -1290,23 +1337,17 @@ async function stopScript(){
     addLog('srv','→ SCRIPT STOP','csnd');setScriptPause(null);kbLocked=false;
     resetRuntimeView();
     setFifoQueueData({running:false,queued:0,waiting:null,paused:false,pause:null});
-    ['prog-badge','kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
-    setProgMsg('Stopped');
+    ['kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
   }
   await fetch('/srv/api/stop',{method:'POST'}).catch(()=>{});
 }
 
 // ── Progress ─────────────────────────────────────────────────
 function setProgress(cur,tot){
-  document.getElementById('prog-cur').textContent=cur!=null?cur:'—';
-  document.getElementById('prog-tot').textContent=tot!=null?tot:'—';
   const pct=(cur!=null&&tot>0)?Math.round(cur/tot*100):0;
-  document.getElementById('prog-fill').style.width=pct+'%';
-  document.getElementById('prog-pct').textContent=cur!=null?pct+'%':'';
   const fi=document.getElementById('sc-prog-fi');if(fi)fi.style.width=pct+'%';
   const lb=document.getElementById('sc-prog-lbl');if(lb)lb.textContent=cur!=null?`${cur} / ${tot}  ${pct}%`:'0 / 0';
 }
-function setProgMsg(m){document.getElementById('prog-msg').textContent=m;}
 
 // ── Keyboard ─────────────────────────────────────────────────
 document.getElementById('kb-body').addEventListener('click',e=>{
@@ -1363,7 +1404,6 @@ async function stopScript(){
   await fetch('/script/stop',{method:'POST'}).catch(()=>{});
   await fetch('/srv/api/stop',{method:'POST'}).catch(()=>{});
   addLog('srv','→ STOP','csnd');
-  document.getElementById('prog-badge').style.display='none';
   kbLocked=false;
   document.getElementById('kb-lock-lbl').style.display='none';
   document.getElementById('kb-lock-msg').style.display='none';
@@ -1458,11 +1498,19 @@ function renderFifoQueue(){
   const body=document.getElementById('fifo-queue-body');
   const count=document.getElementById('fifo-queue-total');
   if(!body||!count)return;
+  const active=runtimeState.active;
   const waiting=fifoState.paused?(fifoState.pause||fifoState.waiting):fifoState.waiting;
-  const state=fifoState.paused?'Paused':waiting?'Waiting':fifoState.running?'Running':fifoState.queued?'Queued':'Idle';
+  const paused=fifoState.paused||active?.phase==='paused';
+  const state=paused?'Paused':waiting||active?.phase==='waiting'?'Waiting':active||fifoState.running?'Running':fifoState.queued?'Queued':'Idle';
+  const activeName=active?.name||'Active script';
+  const step=Number.isInteger(waiting?.step)?waiting.step:active?.current_step;
+  const total=Number.isInteger(waiting?.total)?waiting.total:active?.total;
+  const stepText=Number.isInteger(step)&&Number.isInteger(total)?`Step ${step+1} / ${total}`:'';
   count.textContent=String(fifoState.queued);
-  body.innerHTML=`<div class="evt-head"><span>${state}</span><span>${fifoState.queued} queued</span></div>`+
-    (waiting?.evt?`<div class="fifo-event">EVT: ${esc(waiting.evt)}</div><div class="evt-head">Step ${Number(waiting.step)+1} / ${Number(waiting.total)}</div>`:'');
+  body.innerHTML=`<div class="evt-head"><span>${state}</span></div>`+
+    (active?`<div class="fifo-active"><span>${esc(activeName)}</span>${stepText?`<span class="fifo-active-step">${stepText}</span>`:''}</div>`:'')+
+    (waiting?.evt?`<div class="fifo-event">EVT: ${esc(waiting.evt)}</div>`:'')+
+    (paused&&!waiting?.evt?`<div class="fifo-event">Manually paused</div>`:'');
 }
 function setFifoQueueData(data){
   const queued=Number(data.queued);
@@ -1479,12 +1527,10 @@ async function refreshScriptStatus(){
     if(d){
       if(d.runtime&&setRuntimeSnapshot(d.runtime)===false)return;
       setFifoQueueData(d);
-      const wasPaused=!!scriptPauseState;
       setScriptPause(d.paused?d.pause:null);
       if(d.running===false&&!d.paused){
         kbLocked=false;
-        ['prog-badge','kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
-        if(wasPaused)setProgMsg('Idle');
+        ['kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
       }
     }
   }catch(_){ }
@@ -1507,7 +1553,7 @@ function srvWSConnect(){
     }
     else if(msg.type==='status') applySrvStatus(msg);
     else if(msg.type==='attached'){attachedMap=intKeys(msg.attached||{});renderServoList();}
-    else if(msg.type==='done'){applySrvStatus({state:'idle'});setProgress(null,null);setProgMsg('✔ done');document.getElementById('prog-badge').style.display='none';}
+    else if(msg.type==='done'){applySrvStatus({state:'idle'});setProgress(null,null);}
     else if(msg.type==='error') addLog('srv','ERR '+msg.message,'cerr');
     else if(msg.type==='script_pool') refreshScriptStatus();
     else if(msg.type==='workspace_cleared'){
@@ -1539,25 +1585,21 @@ function kbmWSConnect(){
     } else if(msg.type==='script_wait'){
       setScriptPause(null);
       setFifoQueueData({...fifoState,running:true,paused:false,pause:null,waiting:{evt:msg.evt,step:msg.step,total:msg.total}});
-      setProgMsg(`⌛ waiting EVT:${msg.evt}`);
       addLog('kbm',`⌛ waiting EVT:${msg.evt}`,'crun');
     } else if(msg.type==='script_event'){
       setScriptPause(null);
       setFifoQueueData({...fifoState,running:true,paused:false,pause:null,waiting:null});
       addLog('kbm',`✓ EVT matched ${msg.evt}`,'cevt');
-      setProgMsg(`✓ EVT ${msg.evt}`);
     } else if(msg.type==='script_resumed'){
       setScriptPause(null);
       setFifoQueueData({...fifoState,running:true,paused:false,pause:null,
         waiting:msg.evt?{evt:msg.evt,step:msg.step,total:msg.total}:null});
-      setProgMsg(msg.evt?'Waiting EVT:'+msg.evt:'Resumed');
     } else if(msg.type==='script_start'){
       setScriptPause(null);
       setFifoQueueData({...fifoState,running:true,paused:false,pause:null,waiting:null});
       refreshScriptStatus();
       addLog('kbm',`▶ Script started  ${msg.total} steps  loop=${msg.loop}`,'csnd');
       setProgress(0,msg.total);
-      document.getElementById('prog-badge').style.display='';
       kbLocked=true;
       document.getElementById('kb-lock-lbl').style.display='';
       document.getElementById('kb-lock-msg').style.display='';
@@ -1568,14 +1610,11 @@ function kbmWSConnect(){
       setProgress(cur,tot);
       const typeLabel=msg.step_type.toUpperCase();
       document.getElementById('sc-prog-step').textContent=`[${typeLabel}] ${cur}/${tot}`;
-      document.getElementById('prog-msg').textContent=`[${typeLabel}] step ${cur}/${tot}`;
     } else if(msg.type==='script_done'){
       setScriptPause(null);
       setFifoQueueData({...fifoState,running:false,paused:false,pause:null,waiting:null});
       refreshScriptStatus();
       addLog('kbm',`✔ Script done  ×${msg.iterations||1}`,'cok');
-      setProgMsg('✔ done');
-      document.getElementById('prog-badge').style.display='none';
       kbLocked=false;
       document.getElementById('kb-lock-lbl').style.display='none';
       document.getElementById('kb-lock-msg').style.display='none';
@@ -1583,8 +1622,6 @@ function kbmWSConnect(){
       setScriptPause(null);
       setFifoQueueData({running:false,queued:0,paused:false,pause:null,waiting:null});
       addLog('kbm','■ Script stopped','crun');
-      setProgMsg('■ stopped');
-      document.getElementById('prog-badge').style.display='none';
       kbLocked=false;
       document.getElementById('kb-lock-lbl').style.display='none';
       document.getElementById('kb-lock-msg').style.display='none';
@@ -1599,8 +1636,7 @@ function kbmWSConnect(){
         setFifoQueueData({...fifoState,running:false,paused:false,pause:null,waiting:null});
         refreshScriptStatus();
         kbLocked=false;
-        ['prog-badge','kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
-        setProgMsg(msg.message||'Script failed');
+        ['kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
       }
     } else if(msg.type==='ocr_result'){
       addLog('kbm',`OCR ${msg.variable} = ${msg.value}`,'cok');
@@ -2051,13 +2087,12 @@ function renderSnapList(){
     <div class="snap-item">
       <div class="snap-meta">
         <img class="snap-thumb" src="data:image/jpeg;base64,${s.thumb_b64}" alt="${s.id}" title="${s.id}">
-        <span class="snap-id">${s.id}</span>
+        <div class="snap-actions">
+          <button class="btn-sm" onclick="openCondModal('${s.id}')" title="Create condition from this snapshot">CON</button>
+          <button class="btn-sm" onclick="openOcrModal('${s.id}')" title="Select four-digit OCR region">OCR</button>
+          <button class="btn-sm" onclick="openImageMoveModal('${s.id}')" title="Locate image center and move cursor without clicking">MOV</button>
+        </div>
         <button class="del-btn" onclick="deleteSnapshot('${s.id}')" title="Delete snapshot">✕</button>
-      </div>
-      <div class="snap-actions">
-        <button class="btn-t btn-sm" onclick="openCondModal('${s.id}')" title="Create condition from this snapshot">CON</button>
-        <button class="btn-t btn-sm" onclick="openOcrModal('${s.id}')" title="Select four-digit OCR region">OCR</button>
-        <button class="btn-t btn-sm" onclick="openImageMoveModal('${s.id}')" title="Locate image center and move cursor without clicking">MOV</button>
       </div>
     </div>`).join('');
 }
@@ -2437,29 +2472,16 @@ function renderCondList(){
       <div class="cond-row1">
         <span class="cond-name" title="${esc(c.condition_id)}">${esc(c.name)}</span>
         <span class="cond-score" style="color:${scoreColor}">${(c.last_score).toFixed(2)}${cool}</span>
-        <span style="font-family:var(--mono);font-size:9px;color:${armed?'var(--grn)':'var(--fg3)'}">${armed?'●ARM':'○DIS'}</span>
+        <span style="font-family:var(--mono);font-size:9px;color:${armed?'var(--grn)':'var(--fg3)'}">${armed?'●ACTIVE':'○INACTIVE'}</span>
       </div>
       <div class="cond-acts">
-        ${armed
-          ?`<button class="btn-sm btn-sm" onclick="disarmCond('${cidEnc}')">DISARM</button>`
-          :`<button class="btn-g btn-sm" onclick="armCond('${cidEnc}')">ARM</button>`}
-        <button class="btn-b btn-sm" onclick="testCond('${cidEnc}')">TEST</button>
-        <button class="btn-p btn-sm" onclick="openCondModalEdit('${cidEnc}')">EDIT</button>
-        <button class="btn-t btn-sm" onclick="addImgStepDirect('${cidEnc}','${esc(c.name)}')">+SCRIPT</button>
+        <button class="btn-sm" onclick="testCond('${cidEnc}')">TEST</button>
+        <button class="btn-sm" onclick="openCondModalEdit('${cidEnc}')">EDIT</button>
+        <button class="btn-sm" onclick="addImgStepDirect('${cidEnc}','${esc(c.name)}')">+SCRIPT</button>
         <button class="del-btn" onclick="deleteCond('${cidEnc}')" title="Delete">✕</button>
       </div>
     </div>`;
   }).join('');
-}
-async function armCond(cidEnc){
-  const cid=decodeURIComponent(cidEnc);
-  await fetch('/visual/conditions/'+encodeURIComponent(cid)+'/arm',{method:'POST'});
-  await refreshCondList();
-}
-async function disarmCond(cidEnc){
-  const cid=decodeURIComponent(cidEnc);
-  await fetch('/visual/conditions/'+encodeURIComponent(cid)+'/disarm',{method:'POST'});
-  await refreshCondList();
 }
 async function testCond(cidEnc){
   const cid=decodeURIComponent(cidEnc);
