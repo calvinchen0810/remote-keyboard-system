@@ -102,6 +102,18 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .home-sw input:checked+.home-sl:before{transform:translateX(16px);background:var(--grn)}
 .home-mk{font-family:var(--mono);font-size:10px;color:var(--fg2);margin-left:3px}
 #sst-btns{display:flex;gap:4px}
+.srv-action-head{display:flex;align-items:center;justify-content:space-between}
+.srv-action-list{display:flex;flex-direction:column;gap:3px;padding:5px 6px;max-height:180px;overflow-y:auto}
+.srv-action-row{display:flex;align-items:center;gap:2px;min-width:0}
+.srv-action-run{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.srv-action-mini{padding:1px 3px;font-size:8px}
+.srv-action-inline-name{flex:1;min-width:0;width:0;padding:2px 4px;font-size:10px}
+.srv-action-inline-confirm{flex:0 0 auto;padding:1px 4px;font-size:10px}
+.srv-action-label-form{display:flex;gap:3px;padding:0 6px 5px}
+.srv-action-label-form input{flex:1;min-width:0;width:0;font-size:10px}
+.srv-action-label-error{padding:0 6px 4px;font:9px var(--mono);color:var(--red)}
+.srv-action-edit-controls{display:flex;gap:4px;margin-top:4px}
+.srv-action-edit-controls[hidden],.srv-action-label-form[hidden]{display:none!important}
 
 /* mid */
 #cam-panel{flex:1;display:flex;flex-direction:column;min-height:0}
@@ -236,9 +248,8 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
 .click-mode{display:flex;align-items:center;gap:8px;margin-bottom:4px}
 .click-mode label{font-family:var(--mono);font-size:10px;color:var(--fg2);display:flex;align-items:center;gap:3px;cursor:pointer}
 .click-btns{display:flex;gap:3px}
-.mb-l{font-size:10px;font-weight:600;border:1px solid var(--grn2);border-radius:var(--r);background:rgba(34,197,94,.1);color:var(--grn);padding:3px 0;cursor:pointer;flex:1;text-align:center}
+.mb-l,.mb-r{font-size:10px;font-weight:600;border:1px solid var(--grn2);border-radius:var(--r);background:rgba(34,197,94,.1);color:var(--grn);padding:3px 0;cursor:pointer;flex:1;text-align:center}
 .mb-m{font-size:10px;font-weight:600;border:1px solid var(--br);border-radius:var(--r);background:var(--card);color:var(--fg2);padding:3px 0;cursor:pointer;flex:1;text-align:center}
-.mb-r{font-size:10px;font-weight:600;border:1px solid #7f1d1d;border-radius:var(--r);background:rgba(239,68,68,.08);color:var(--red);padding:3px 0;cursor:pointer;flex:1;text-align:center}
 
 /* popover */
 .pop{position:fixed;background:var(--card);border:1px solid var(--br);border-radius:var(--r);padding:10px;box-shadow:0 8px 20px rgba(0,0,0,.5);z-index:9999;display:none;flex-direction:column;gap:7px;min-width:190px}
@@ -374,7 +385,26 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
         <button class="btn-g btn-sm" onclick="sendStep()">▶ Send</button>
         <button class="btn-sm" onclick="previewStep()">Preview</button>
       </div>
+      <div class="srv-action-edit-controls" id="srv-action-edit-controls" hidden>
+        <button class="btn-b btn-sm" id="srv-action-update-btn" onclick="updateServoAction()">UPDATE</button>
+        <button class="btn-sm" id="srv-action-cancel-edit-btn" onclick="cancelServoActionEdit()">CANCEL</button>
+      </div>
     </div>
+  </div>
+
+  <div class="pn" id="srv-actions-panel" style="flex-shrink:0">
+    <div class="ph srv-action-head">Servo Actions
+      <button class="btn-sm" onclick="beginServoActionSave()" title="Save the current Single Step parameters">＋ ADD</button>
+    </div>
+    <div id="srv-action-list" class="srv-action-list">
+      <div class="cdim">No saved actions</div>
+    </div>
+    <div id="srv-action-label-form" class="srv-action-label-form" hidden>
+      <input id="srv-action-label" type="text" maxlength="40" aria-label="Servo action name" placeholder="Action name" onkeydown="if(event.key==='Enter')saveServoActionLabel();if(event.key==='Escape')cancelServoActionLabel()">
+      <button class="btn-sm" onclick="saveServoActionLabel()">SAVE</button>
+      <button class="btn-sm" onclick="cancelServoActionLabel()">CANCEL</button>
+    </div>
+    <div id="srv-action-label-error" class="srv-action-label-error" role="alert"></div>
   </div>
 
   <div style="flex:1"></div>
@@ -692,6 +722,8 @@ let runtimeSelectedId=null,runtimeFollow=true,runtimeDetailRequest=0,runtimeDeta
 let runtimeDetailJobId=null,runtimeRetiredSessions=new Set();
 let kbLocked=false, modState={CTRL:false,SHIFT:false,ALT:false,GUI:false};
 let homeVal=1;
+let servoActions=[],editingServoActionId=null,servoActionRenameId=null;
+let servoActionLabelMode=null,servoActionLabelTargetId=null;
 let fifoState={running:false,queued:0,waiting:null,paused:false,pause:null};
 
 // ── Drag resize ──────────────────────────────────────────────
@@ -780,13 +812,120 @@ function getSSValues(){
     duration_ms:parseInt(document.getElementById('ss-dur').value)||300,
     home:homeVal};
 }
-async function sendStep(){
-  const p=getSSValues();
+async function sendStep(values=getSSValues(),actionLabel=null){
+  const p={...values};
   const r=await fetch('/srv/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-  if(r.ok) addLog('srv',`→ STEP S${p.servo_id} ${p.angle}°`,'csnd');
+  if(r.ok) addLog('srv',`→ ${actionLabel?'ACTION '+actionLabel:'STEP'} S${p.servo_id} ${p.angle}°`,'csnd');
   else addLog('srv','✘ send failed','cerr');
 }
 function previewStep(){const p=getSSValues();drawCanvas();addLog('srv',`Preview S${p.servo_id} ${p.angle}°`,'cdim');}
+
+const SERVO_ACTIONS_STORAGE_KEY='rks.servoActions.v1';
+function isServoActionParams(params){
+  return params&&Number.isInteger(params.delay_ms)&&params.delay_ms>=0&&params.delay_ms<=30000&&
+    Number.isInteger(params.servo_id)&&params.servo_id>=1&&params.servo_id<=6&&
+    Number.isInteger(params.angle)&&params.angle>=0&&params.angle<=180&&
+    Number.isInteger(params.speed)&&params.speed>=1&&params.speed<=100&&
+    Number.isInteger(params.duration_ms)&&params.duration_ms>=0&&
+    (params.home===0||params.home===1);
+}
+function createServoActionId(){
+  return typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():`servo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+}
+function loadServoActions(){
+  try{
+    const parsed=JSON.parse(localStorage.getItem(SERVO_ACTIONS_STORAGE_KEY)||'[]');
+    servoActions=Array.isArray(parsed)?parsed.filter(action=>action&&typeof action.id==='string'&&
+      typeof action.label==='string'&&action.label.trim()&&action.label.length<=40&&isServoActionParams(action.params))
+      .map(action=>({id:action.id,label:action.label.trim(),params:{...action.params}})):[];
+  }catch(_){servoActions=[];}
+  renderServoActions();
+}
+function persistServoActions(){
+  try{localStorage.setItem(SERVO_ACTIONS_STORAGE_KEY,JSON.stringify(servoActions));return true;}
+  catch(error){addLog('srv','✘ Could not save servo actions in this browser','cerr');return false;}
+}
+function renderServoActions(){
+  const list=document.getElementById('srv-action-list');if(!list)return;
+  if(!servoActions.length){list.innerHTML='<div class="cdim">No saved actions</div>';return;}
+  list.innerHTML=servoActions.map(action=>{
+    const id=encodeURIComponent(action.id);
+    if(action.id===servoActionRenameId){
+      return `<div class="srv-action-row srv-action-renaming"><input id="srv-action-rename-input" class="srv-action-inline-name" type="text" maxlength="40" aria-label="Rename ${esc(action.label)}" value="${esc(action.label)}" onkeydown="if(event.key==='Enter')saveServoActionRename('${id}');if(event.key==='Escape')cancelServoActionRename()"><button class="btn-g srv-action-inline-confirm" title="Save name" onclick="saveServoActionRename('${id}')">✓</button><button class="del-btn" title="Cancel rename" onclick="cancelServoActionRename()">✕</button></div>`;
+    }
+    return `<div class="srv-action-row"><button class="btn-b btn-sm srv-action-run" title="Run ${esc(action.label)}" onclick="executeServoAction('${id}')">${esc(action.label)}</button><button class="btn-sm srv-action-mini" title="Edit servo parameters" onclick="beginServoActionEdit('${id}')">EDIT</button><button class="btn-sm srv-action-mini" title="Rename action" onclick="beginServoActionRename('${id}')">NAME</button><button class="del-btn" title="Delete action" onclick="deleteServoAction('${id}')">✕</button></div>`;
+  }).join('');
+}
+function beginServoActionSave(){
+  servoActionLabelMode='create';servoActionLabelTargetId=null;
+  const input=document.getElementById('srv-action-label');input.value='';
+  document.getElementById('srv-action-label-error').textContent='';
+  document.getElementById('srv-action-label-form').hidden=false;input.focus();
+}
+function beginServoActionRename(idEncoded){
+  const action=servoActions.find(item=>item.id===decodeURIComponent(idEncoded));if(!action)return;
+  servoActionRenameId=action.id;renderServoActions();
+  const input=document.getElementById('srv-action-rename-input');if(input){input.value=action.label;input.focus();}
+}
+function saveServoActionRename(idEncoded){
+  const id=idEncoded?decodeURIComponent(idEncoded):servoActionRenameId;
+  const action=servoActions.find(item=>item.id===id);
+  const input=document.getElementById('srv-action-rename-input');
+  const label=input?.value.trim();
+  if(!action||!label||label.length>40){if(input)input.focus();return false;}
+  action.label=label;persistServoActions();servoActionRenameId=null;renderServoActions();return true;
+}
+function cancelServoActionRename(){
+  servoActionRenameId=null;renderServoActions();
+}
+function saveServoActionLabel(){
+  const input=document.getElementById('srv-action-label');
+  const label=input.value.trim();
+  const error=document.getElementById('srv-action-label-error');
+  if(!label||label.length>40){error.textContent='Enter an action name (1-40 characters).';return false;}
+  if(servoActionLabelMode!=='create')return false;
+  servoActions.push({id:createServoActionId(),label,params:{...getSSValues()}});
+  persistServoActions();renderServoActions();cancelServoActionLabel();return true;
+}
+function cancelServoActionLabel(){
+  servoActionLabelMode=null;servoActionLabelTargetId=null;
+  document.getElementById('srv-action-label-form').hidden=true;
+  document.getElementById('srv-action-label').value='';
+  document.getElementById('srv-action-label-error').textContent='';
+}
+async function executeServoAction(idEncoded){
+  const action=servoActions.find(item=>item.id===decodeURIComponent(idEncoded));
+  if(!action)return;
+  await sendStep({...action.params},action.label);
+}
+function beginServoActionEdit(idEncoded){
+  const action=servoActions.find(item=>item.id===decodeURIComponent(idEncoded));if(!action)return;
+  const params=action.params;
+  document.getElementById('ss-delay').value=params.delay_ms;
+  document.getElementById('ss-sid').value=String(params.servo_id);
+  document.getElementById('ss-angle').value=params.angle;
+  document.getElementById('ss-speed').value=params.speed;
+  document.getElementById('ss-dur').value=params.duration_ms;
+  homeVal=params.home;setHome(homeVal);drawCanvas();
+  editingServoActionId=action.id;
+  document.getElementById('srv-action-edit-controls').hidden=false;
+}
+function updateServoAction(){
+  const action=servoActions.find(item=>item.id===editingServoActionId);if(!action)return;
+  action.params={...getSSValues()};
+  persistServoActions();renderServoActions();cancelServoActionEdit();
+}
+function cancelServoActionEdit(){
+  editingServoActionId=null;
+  document.getElementById('srv-action-edit-controls').hidden=true;
+}
+function deleteServoAction(idEncoded){
+  const id=decodeURIComponent(idEncoded);
+  servoActions=servoActions.filter(action=>action.id!==id);
+  if(editingServoActionId===id)cancelServoActionEdit();
+  if(servoActionRenameId===id)servoActionRenameId=null;
+  persistServoActions();renderServoActions();
+}
 
 // ── Script Editor ────────────────────────────────────────────
 function getDefaultDelay(){return parseInt(document.getElementById('default-delay').value)||1000;}
@@ -2545,6 +2684,7 @@ function addImgStepDirect(cidEnc,name){
 }
 
 // ── Init ─────────────────────────────────────────────────────
+loadServoActions();
 switchLog('srv');
 refreshPorts();
 srvWSConnect();
