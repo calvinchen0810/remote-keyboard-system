@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RKS - Architecture</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -26,6 +27,17 @@ th{color:#64748b;font-weight:normal;font-size:.71rem;letter-spacing:.4px;backgro
 tr:nth-child(even){background:#0d0d10}
 code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-radius:3px;font-size:.8rem}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:22px;max-width:1120px}
+.two-col>div{min-width:0;overflow-x:auto}
+.feature-doc{max-width:1120px;font-family:Consolas,monospace;font-size:.8rem;line-height:1.65}
+.feature-doc section{padding:12px 0 18px;border-bottom:1px solid #2a2a38;margin-bottom:12px}
+.feature-doc h3{color:#2dd4bf;margin-bottom:8px}
+.feature-doc p{margin:6px 0;color:#94a3b8}
+.feature-doc ul{padding-left:22px;color:#94a3b8}
+.feature-doc pre{padding:10px;background:#111115;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.76rem}
+.feature-doc code{overflow-wrap:anywhere}
+.feature-doc a{color:#38bdf8}
+.table-scroll{overflow-x:auto;max-width:100%;margin:10px 0}
+.runtime-note{max-width:1120px;margin:12px 0;color:#94a3b8;font-family:Consolas,monospace;font-size:.77rem;line-height:1.6}
 @media (max-width:980px){
   .two-col{grid-template-columns:1fr}
 }
@@ -33,11 +45,12 @@ code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-ra
 </head>
 <body>
 <h1>RKS // REMOTE KEYBOARD SYSTEM</h1>
-<div class="subtitle">Architecture, Runtime Flow, Protocol and Validation Plan - <a href="/">Back to UI</a></div>
+<div class="subtitle">Architecture, Runtime Flow, Protocol and Validation Plan - updated 2026-10-20 - <a href="/">Back to UI</a></div>
 
 <div class="tabs">
   <div class="tab active" onclick="show('arch',this)">Circuit Architecture</div>
   <div class="tab" onclick="show('flow',this)">Runtime Flow</div>
+  <div class="tab" onclick="show('features',this)">Visual &amp; Scripts</div>
   <div class="tab" onclick="show('proto',this)">Serial Protocol</div>
   <div class="tab" onclick="show('mvp',this)">MVP Validation Plan</div>
 </div>
@@ -67,7 +80,7 @@ code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-ra
       <text x="155" y="73" text-anchor="middle" fill="#94a3b8" font-size="10" letter-spacing="1">FastAPI :8000</text>
       <text x="155" y="91" text-anchor="middle" fill="#475569" font-size="9">KeyboardSerial 38400 / ServoSerial 115200</text>
       <text x="155" y="108" text-anchor="middle" fill="#475569" font-size="9">WS /ws/kbm, WS /ws/srv, Event Bus, /stream</text>
-      <text x="155" y="123" text-anchor="middle" fill="#475569" font-size="9">/script/run + visual bundle import pipeline</text>
+      <text x="155" y="123" text-anchor="middle" fill="#475569" font-size="9">FIFO scripts / IMG / OCR / IMAGE_MOVE</text>
 
       <line x1="280" y1="93" x2="310" y2="93" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ab)"/>
       <text x="282" y="88" fill="#38bdf8" font-size="8">USB 38400</text>
@@ -81,7 +94,7 @@ code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-ra
       <text x="180" y="212" text-anchor="middle" fill="#475569" font-size="9">115200 baud</text>
 
       <rect x="30" y="238" width="250" height="36" rx="6" fill="#111115" stroke="#2a2a38"/>
-      <text x="155" y="260" text-anchor="middle" fill="#94a3b8" font-size="10">Webcam -> MJPEG /stream</text>
+      <text x="155" y="260" text-anchor="middle" fill="#94a3b8" font-size="10">Capture card / camera -> /stream</text>
       <line x1="60" y1="238" x2="60" y2="218" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#a0)"/>
 
       <rect x="30" y="296" width="250" height="46" rx="6" fill="#111115" stroke="#3a3a50"/>
@@ -94,7 +107,7 @@ code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-ra
       <rect x="30" y="362" width="250" height="58" rx="6" fill="#111115" stroke="#2a2a38"/>
       <text x="155" y="383" text-anchor="middle" fill="#94a3b8" font-size="10">Browser Client (any device)</text>
       <text x="155" y="399" text-anchor="middle" fill="#475569" font-size="9">http://Computer2:8000</text>
-      <text x="155" y="414" text-anchor="middle" fill="#475569" font-size="9">Virtual keyboard, servo panel, mixed scripts</text>
+      <text x="155" y="414" text-anchor="middle" fill="#475569" font-size="9">SNAP: CON / OCR / MOV + Script Editor</text>
 
       <rect x="30" y="436" width="250" height="88" rx="6" fill="#0d0d10" stroke="#1a1a24"/>
       <text x="40" y="455" fill="#64748b" font-size="9" letter-spacing=".8">Baud Summary</text>
@@ -128,7 +141,7 @@ code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-ra
       <rect x="464" y="150" width="246" height="76" rx="6" fill="#111115" stroke="#2a2a38"/>
       <text x="587" y="171" text-anchor="middle" fill="#94a3b8" font-size="10">OS / Applications</text>
       <text x="587" y="189" text-anchor="middle" fill="#475569" font-size="9">Receives HID keyboard input</text>
-      <text x="587" y="206" text-anchor="middle" fill="#475569" font-size="9">Receives HID mouse input</text>
+      <text x="587" y="206" text-anchor="middle" fill="#475569" font-size="9">Relative + absolute mouse HID (Windows)</text>
       <text x="587" y="218" text-anchor="middle" fill="#475569" font-size="8">Looks like a normal USB keyboard/mouse device</text>
 
       <rect x="464" y="246" width="246" height="56" rx="6" fill="#111115" stroke="#2a2a38"/>
@@ -138,7 +151,7 @@ code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-ra
       <rect x="464" y="322" width="246" height="102" rx="6" fill="#111115" stroke="#2a2a38"/>
       <text x="587" y="344" text-anchor="middle" fill="#94a3b8" font-size="10">Computer 1 Screen</text>
       <rect x="478" y="354" width="218" height="58" rx="3" fill="none" stroke="#1a1a24"/>
-      <text x="587" y="385" text-anchor="middle" fill="#475569" font-size="9">Webcam capture target for image match</text>
+      <text x="587" y="385" text-anchor="middle" fill="#475569" font-size="9">Full desktop: IMG / OCR / image search</text>
 
       <rect x="464" y="444" width="246" height="58" rx="6" fill="#0d0d10" stroke="#1a1a24"/>
       <text x="587" y="464" text-anchor="middle" fill="#64748b" font-size="9">Computer 1 Arduino Serial Monitor (optional)</text>
@@ -149,7 +162,7 @@ code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-ra
       <text x="222" y="552" fill="#f59e0b" font-size="8">Dupont wire <= 30 cm</text>
 
       <path d="M155 274 Q155 590 464 374" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#a0)"/>
-      <text x="302" y="584" fill="#64748b" font-size="8">Webcam capture path</text>
+      <text x="302" y="584" fill="#64748b" font-size="8">Capture-card / camera path</text>
 
       <g transform="translate(14,540)">
         <rect width="282" height="50" rx="4" fill="#0d0d10" stroke="#1a1a24"/>
@@ -162,7 +175,7 @@ code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-ra
         <line x1="10" y1="36" x2="38" y2="36" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5 3"/>
         <text x="43" y="39" fill="#f59e0b" font-size="8">Servo wire</text>
         <line x1="110" y1="36" x2="138" y2="36" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 3"/>
-        <text x="143" y="39" fill="#94a3b8" font-size="8">Webcam</text>
+        <text x="143" y="39" fill="#94a3b8" font-size="8">Video capture</text>
         <line x1="200" y1="36" x2="228" y2="36" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2"/>
         <text x="233" y="39" fill="#64748b" font-size="8">Feedback</text>
       </g>
@@ -211,22 +224,22 @@ code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-ra
       <line x1="390" y1="276" x2="390" y2="294" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
       <rect x="310" y="294" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="390" y="311" text-anchor="middle" fill="#64748b" font-size="9">OK RUNNING n/total</text><text x="390" y="322" text-anchor="middle" fill="#64748b" font-size="8">websocket status update</text>
 
-      <rect x="620" y="34" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="700" y="55" text-anchor="middle" fill="#94a3b8" font-size="9">Run mixed script</text>
+      <rect x="620" y="34" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="700" y="55" text-anchor="middle" fill="#94a3b8" font-size="9">/script/run -> FIFO</text>
       <line x1="700" y1="68" x2="700" y2="86" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-      <rect x="620" y="86" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="700" y="101" text-anchor="middle" fill="#94a3b8" font-size="9">For each step</text><text x="700" y="113" text-anchor="middle" fill="#64748b" font-size="8">evt wait -> delay -> dispatch</text>
+      <rect x="620" y="86" width="160" height="34" rx="4" fill="#111115" stroke="#2a2a38"/><text x="700" y="101" text-anchor="middle" fill="#94a3b8" font-size="9">Active script conditions only</text><text x="700" y="113" text-anchor="middle" fill="#64748b" font-size="8">evt -> delay -> dispatch</text>
       <line x1="700" y1="120" x2="700" y2="138" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
       <polygon points="700,138 760,163 700,188 640,163" fill="none" stroke="#2a2a38"/>
       <text x="700" y="166" text-anchor="middle" fill="#94a3b8" font-size="9">Step type?</text>
 
       <line x1="640" y1="163" x2="600" y2="163" stroke="#94a3b8" stroke-width="1.5"/>
       <line x1="600" y1="163" x2="600" y2="210" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-      <text x="605" y="156" fill="#a78bfa" font-size="8">kbd/mse</text>
-      <rect x="554" y="210" width="92" height="30" rx="3" fill="#111115" stroke="#3a3a50"/><text x="600" y="229" text-anchor="middle" fill="#a78bfa" font-size="8">/kbm/api/send</text>
+      <text x="605" y="156" fill="#a78bfa" font-size="8">kbd / mse</text>
+      <rect x="554" y="210" width="92" height="30" rx="3" fill="#111115" stroke="#3a3a50"/><text x="600" y="229" text-anchor="middle" fill="#a78bfa" font-size="8">kb_serial.send()</text>
 
       <line x1="760" y1="163" x2="800" y2="163" stroke="#94a3b8" stroke-width="1.5"/>
       <line x1="800" y1="163" x2="800" y2="210" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
       <text x="764" y="156" fill="#f59e0b" font-size="8">srv</text>
-      <rect x="754" y="210" width="92" height="30" rx="3" fill="#111115" stroke="#3a3a50"/><text x="800" y="229" text-anchor="middle" fill="#f59e0b" font-size="8">/srv/api/command</text>
+      <rect x="754" y="210" width="92" height="30" rx="3" fill="#111115" stroke="#3a3a50"/><text x="800" y="229" text-anchor="middle" fill="#f59e0b" font-size="8">SRV command()</text>
 
       <line x1="600" y1="240" x2="600" y2="270" stroke="#94a3b8" stroke-width="1"/>
       <line x1="800" y1="240" x2="800" y2="270" stroke="#94a3b8" stroke-width="1"/>
@@ -235,9 +248,83 @@ code{font-family:Consolas,monospace;background:#1e1e26;padding:1px 5px;border-ra
 
       <rect x="620" y="288" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="700" y="306" text-anchor="middle" fill="#94a3b8" font-size="9">Progress update</text><text x="700" y="317" text-anchor="middle" fill="#64748b" font-size="8">step i / total</text>
       <line x1="700" y1="322" x2="700" y2="340" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#fa)"/>
-      <rect x="620" y="340" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="700" y="359" text-anchor="middle" fill="#22c55e" font-size="9">Completed</text><text x="700" y="371" text-anchor="middle" fill="#64748b" font-size="8">done status broadcast</text>
+      <rect x="620" y="340" width="160" height="34" rx="4" fill="#111115" stroke="#1a1a24"/><text x="700" y="359" text-anchor="middle" fill="#22c55e" font-size="9">Disarm -> next FIFO job</text><text x="700" y="371" text-anchor="middle" fill="#64748b" font-size="8">fresh runtime / visual events</text>
     </svg>
   </div>
+  <p class="runtime-note">The mixed runner dispatches directly to serial objects; it does not call its own HTTP routes. OCR resolves script-local variables before KBD TYPE. IMAGE_MOVE searches fresh frames and moves without clicking; CLICK/DBLCLICK are separate MSE steps. Clear commands bypass the execution queue. See Visual &amp; Scripts for full behavior and limits.</p>
+</div>
+
+<div class="panel feature-doc" id="panel-features">
+  <section data-feature="fifo">
+    <h3>FIFO / Active-Script Visual Conditions</h3>
+    <p><code>POST /script/run</code> imports and queues a job, including jobs with EVT gates. Submit A, wait for its HTTP response, then submit B and C to guarantee A -&gt; B -&gt; C. Concurrent requests follow server-lock acquisition order; a successful response does not mean execution has completed.</p>
+    <ul>
+      <li>Imported conditions start disarmed. Only the active script's imported/referenced conditions are enabled; later scripts cannot bypass its event wait.</li>
+      <li>At each job boundary: disarm conditions, remove old IMG events, and reset hit counts, edge state and cooldown. Identical images and shared existing condition IDs are supported; the next job requires new post-activation captures, not disappearance/reappearance.</li>
+      <li>Each capture generation counts at most once. A stalled camera cannot repeatedly satisfy min_hits using the same cached frame.</li>
+      <li>Active IMG events enter EventBus without waiting for <code>_script_control_lock</code> held by a later import. Ownership is checked atomically under the EventBus lock. Legacy EVT Pool release stays serialized; new jobs do not enter that pool.</li>
+      <li>EVT/IMG waits have no timeout or countdown and never automatically pause. Conditions stay armed while waiting and later jobs stay queued. PAUSE / <code>POST /script/pause</code> manually suspends at safe checkpoints and disarms current conditions; RESUME / <code>POST /script/resume</code> discards paused-period gate events, rearms fresh runtime and continues without replaying earlier actions.</li>
+      <li><code>GET /script/status</code> includes manual pause metadata and unique pause_id; running stays true while suspended. RESUME must echo pause_id; missing/stale IDs or duplicate resume return 409. WebSocket script_paused/script_resumed and status polling restore the state after reload; superseded polls are ignored. Stop/clear cancels the job and discards the queue. Existing dispatched hardware actions cannot be recalled. OCR/image search retain their bounded safety timeouts and do not automatically pause. <code>loop: true</code> otherwise retains its turn until stopped.</li>
+    </ul>
+    <p><code>GET /script/status</code> returns running, queued, waiting, pause and legacy pending state. The right-hand FIFO Queue panel replaces EVT Pool: it shows current Waiting/Paused event and step, plus later queued count excluding the active job; otherwise Running/Idle. It is a read-only summary, not event history or a queue editor. Status polling restores waiting state after reload and WebSocket updates reflect transitions; stop/clear resets it. Auto-attach happens when a job becomes active, not when it is submitted.</p>
+  </section>
+  <section data-feature="clear">
+    <h3>Clear Command / Workspace Reset</h3>
+    <p>Send the following object to <code>POST /script/run</code>; it is handled as a management command, not a queued script:</p>
+    <pre>{"command":"clear","targets":["snapshots","conditions","scripts"]}</pre>
+    <p>Cancel and await the runner; discard queued scripts, EVT Pool and buffered events; persist empty conditions and clear match runtime; then clear snapshots. Broadcast <code>workspace_cleared</code> so connected browsers reset Script Editor, visual lists, progress and keyboard lock.</p>
+    <p>All three targets are required; unknown/duplicate/partial targets or extra script fields return 400 before mutation. Repeating on empty state succeeds with zero counts. If persistence fails, return 500: scripts are already stopped but conditions/snapshots are retained for retry. Camera/serial connections, servo configuration and logs are preserved. Already transmitted hardware actions cannot be recalled.</p>
+  </section>
+  <section data-feature="ocr">
+    <h3>Four-Digit OCR / Script Variables</h3>
+    <p>SNAP selects a normalized ROI; runtime reads the same area from fresh camera/capture-card frames, not from the setup SNAP. Settings live inline in an <code>ocr</code> step and survive SNAP deletion. The default is two agreeing distinct captures within 5000ms.</p>
+    <pre>{"type":"ocr","roi":[0.05,0.1,0.2,0.08],"variable":"digits","timeout_ms":5000,"stable_hits":2}
+{"type":"kbd","cmd_type":"TYPE","text":"${digits}"}
+{"type":"kbd","cmd_type":"KEY","key":"ENTER"}</pre>
+    <p>Accept exactly four ASCII digits; preserve leading zeros such as <code>0037</code>. Variables are local to one script iteration and the target variable is cleared before OCR. Missing/malformed placeholders or failed OCR abort before later keyboard transmission. Substitution applies only to structured KBD TYPE text, not raw cmd/KEY/COMBO.</p>
+    <p>OpenCV preprocessing + <code>pytesseract</code> require an external Tesseract executable with English trained data. <code>TESSERACT_CMD</code> configures a custom executable path; PATH and standard Windows install directories are also checked. The EXE includes the Python wrapper, not the external executable/DLLs/trained data. Missing OCR prerequisites do not disable other features; real capture accuracy still needs calibration.</p>
+    <p><code>POST /visual/ocr/test</code> performs recognition without assigning script variables: 422 invalid settings, 503 unavailable engine, 408 timeout. Export <code>schema_version</code> 3 identifies OCR unless an IMAGE_MOVE step requires version 5.</p>
+  </section>
+  <section data-feature="image-move">
+    <h3>IMAGE_MOVE / Locate Center and Move Only</h3>
+    <p>SNAP MOV selects a cropped PNG template. A <code>mse</code> step with <code>action: IMAGE_MOVE</code> embeds it inside <code>image_move</code>, with frame dimensions, search ROI, threshold, timeout and stable samples, but no mouse button. Export/import uses <code>schema_version: 5</code>; no SNAP ID or IMG condition is required.</p>
+    <p>Runtime: search fresh captures -&gt; reject multiple candidates -&gt; confirm stable center -&gt; convert to HID 0..32767 -&gt; <code>MOUSE:ABS x y</code> -&gt; require OK. It never clicks automatically. Add a separate MSE CLICK or DBLCLICK step with L/R/M; its delay controls the interval. Movement failure prevents later steps. Low-detail templates, ambiguity, timeout or an aspect-ratio change abort the job. IMAGE_CLICK is removed, not an alias; old scripts must be recreated. No Pro Micro firmware change is required.</p>
+    <ul>
+      <li>Default full-frame search ROI [0,0,1,1], threshold 0.92, stable_hits 2, timeout_ms 5000. Narrow the search area to resolve duplicates instead of choosing arbitrarily.</li>
+      <li>Template scales proportionally when capture resolution changes; the first version targets one complete Windows desktop with no crop/black bars. Stable layout and single-display mapping are prerequisites.</li>
+      <li><code>allow_send</code> is checked inside KeyboardSerial's serial lock, including immediately before a write, so cancelled queued sends cannot later move/click. Commands already sent cannot be undone.</li>
+      <li>Template-selection versions reject stale replies. Save and Test are mutually exclusive, and closing/resetting the modal aborts outstanding browser requests.</li>
+    </ul>
+    <div class="table-scroll"><table><thead><tr><th>Endpoint</th><th>Purpose</th></tr></thead><tbody>
+      <tr><td><code>POST /visual/image-move/template</code></td><td>Validate/crop a SNAP ROI and return portable inline template settings.</td></tr>
+      <tr><td><code>POST /visual/image-move/test</code></td><td>Locate only: match box, pixel/HID center, score and annotated preview. No serial access or click. 409 ambiguity, 408 timeout, 422 invalid settings.</td></tr>
+    </tbody></table></div>
+    <p><a href="/static/click-target.html">Windows click-target acceptance page</a> has nine distinct targets and records received coordinates. The page itself sends no serial commands. Physical Windows/capture-card accuracy remains a separate user-run acceptance step; software/browser tests do not prove real HID accuracy.</p>
+  </section>
+  <section data-feature="absolute-hid">
+    <h3>Pro Micro / Relative + Absolute HID</h3>
+    <p>ATmega32U4 Pro Micro uses stock Keyboard/Mouse plus HID-Project 2.8.4 AbsoluteMouse (report ID 7). Nano_KB still forwards complete lines at 38400 without interpreting them. Select the actual Pro Micro board/voltage/clock in Arduino IDE; Nano/Uno is not a compatible build target.</p>
+    <p><code>CAPS</code> reports <code>CAPS ABS_MOUSE=1 ABS_RANGE=0..32767</code>, followed by the normal OK. <code>MOUSE:ABS 16384 16384</code> moves to the center without clicking. Firmware validates both coordinates before movement and maps 0..32767 to the library's signed API; startup sends no absolute positioning report.</p>
+    <p>Commands must enter through Nano_KB -&gt; Pro Micro Serial1. Pro Micro USB serial is still an EVT input/debug channel, not a HID command input. Relative MOVE/CLICK/SCROLL and keyboard commands remain unchanged. UI MOVE_TO still maps to relative MOUSE:MOVE and is not the absolute positioning interface.</p>
+  </section>
+  <section data-feature="editor">
+    <h3>Script Editor / SNAP Pool</h3>
+    <ul>
+      <li>SNAP metadata (thumbnail, ID, delete) occupies the first row; <code>CON / OCR / MOV</code> are three equal-width buttons on the second row, retaining their condition/OCR/image-move actions and tooltips.</li>
+      <li>SRV Servo ID selector is 44px wide so the number and native arrow fit.</li>
+      <li>KBD COMBO's second key dropdown includes F10; the first modifier dropdown and final key field remain separate and unchanged.</li>
+      <li>KBD TYPE offers earlier OCR variables and inserts literal <code>${digits}</code> placeholders. Import materializes OCR defaults; IMAGE_MOVE settings/templates are portable.</li>
+      <li>Shared ROI modal preserves the source aspect ratio, supports pointer/touch selection and rejects stale responses after close/reset or a new selection.</li>
+    </ul>
+  </section>
+  <section data-feature="runtime-view">
+    <h3>Read-Only Execution Status / Draft Isolation</h3>
+    <p>Script Editor has independent Edit and Execution Status tabs. Runtime notifications never assign to the local steps draft. KBD TYPE is displayed in full, HTML-escaped and unmasked. The optional Name field is included in submitted/exported JSON; every submission receives a generated job_id, even when the same request object is reused.</p>
+    <p>Follow Active tracks the FIFO head; selecting a queued job previews immutable submitted parameters without arming conditions, changing order or executing. There are no editing, drag/reorder, delete or rerun controls and no history store. Current/completed/failed/pending rows, iteration, waiting/paused/recognizing/locating phase, OCR values and IMAGE_MOVE results are shown. EVT/IMG displays no timeout; remaining time applies only to bounded recognition/search.</p>
+    <p>Condition details include name, ROI, thumbnail when available, score/threshold and hits. Queued previews are inactive and never borrow another job's runtime. STOP and PAUSE ACTIVE / RESUME ACTIVE control the active job, not the selected preview.</p>
+    <p><code>GET /script/status</code> includes lightweight runtime metadata; WebSocket <code>script_runtime</code> carries session/revision snapshots. <code>GET /script/jobs/{job_id}</code> returns read-only steps and condition detail without large template payloads. Polling refreshes metrics/deadlines; old sessions, stale requests and old preview content are rejected/cleared. Reload/reconnect restores live work, while completed/stopped/cleared jobs are removed.</p>
+    <p>Verify with <code>tools/test_script_runtime.py</code>, runtime cases in <code>tools/test_clear_command.py</code>, and <code>tools/test_script_editor.cjs</code>. Confirm full TYPE is readable as text, draft is unchanged after queued previews and stop, and condition runtime stays isolated. Physical hardware is not required for these isolated tests.</p>
+  </section>
 </div>
 
 <div class="panel" id="panel-proto">
@@ -292,11 +379,13 @@ const kbmRows = [
   ['COMBO:m+m+k', 'COMBO:CTRL+ALT+DELETE', 'Combination key, auto release all'],
   ['RELEASEALL', '-', 'Release all pressed keys'],
   ['MOUSE:MOVE dx dy', 'MOUSE:MOVE 50 -30', 'Relative move, range -127 to 127'],
+  ['MOUSE:ABS x y', 'MOUSE:ABS 16384 16384', 'Absolute move only, both axes 0..32767; requires updated Pro Micro + HID-Project 2.8.4'],
   ['MOUSE:CLICK L/R/M', 'MOUSE:CLICK L', 'Single click left/right/middle'],
   ['MOUSE:DBLCLICK L', 'MOUSE:DBLCLICK L', 'Double click'],
   ['MOUSE:DOWN/UP L', 'MOUSE:DOWN L', 'Mouse button hold/release'],
   ['MOUSE:SCROLL n', 'MOUSE:SCROLL -3', 'Wheel scroll, positive up negative down'],
   ['PING', '-', 'Connection test, returns OK PONG'],
+  ['CAPS', 'CAPS', 'Reports CAPS ABS_MOUSE=1 ABS_RANGE=0..32767, then OK; no pointer movement'],
   ['EVT:<name>', 'EVT:HELLO', 'Event emitted from target side for script gates']
 ];
 
@@ -312,13 +401,17 @@ const srvRows = [
   ['PING', '-', 'Connection test']
 ];
 
+function escapeHtml(value) {
+  return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 function buildTable(rows, tbodyId, color) {
   const tb = document.getElementById(tbodyId);
   rows.forEach(([cmd, ex, desc]) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td style="color:${color};white-space:nowrap">${cmd}</td>
-      <td style="color:#94a3b8;white-space:nowrap"><code>${ex}</code></td>
-      <td style="color:#64748b;font-size:.75rem">${desc}</td>`;
+    tr.innerHTML = `<td style="color:${color};white-space:nowrap">${escapeHtml(cmd)}</td>
+      <td style="color:#94a3b8;white-space:nowrap"><code>${escapeHtml(ex)}</code></td>
+      <td style="color:#64748b;font-size:.75rem">${escapeHtml(desc)}</td>`;
     tb.appendChild(tr);
   });
 }
@@ -339,7 +432,7 @@ const mvpSteps = [
       'Expected: text <code>Hello RKS</code> appears on Computer 1, mouse moves, and left click is triggered.',
       'Expected: test script prints all checks as passed.'
     ],
-    tip: 'For direct Pro Micro test, use Arduino Serial Monitor on Computer 1 (38400) and send TYPE:test.'
+    tip: 'HID commands enter through Nano_KB. Pro Micro USB Serial Monitor is for debug/EVT forwarding, not direct TYPE commands.'
   },
   {
     n: 2,
@@ -406,7 +499,7 @@ const mvpSteps = [
     n: 6,
     color: '#a78bfa',
     title: 'EVT-driven flow verification',
-    desc: 'Validate pending script release based on target-side EVT events.',
+    desc: 'Validate an active FIFO script waiting for target-side EVT events; later jobs remain queued.',
     prereq: 'Steps 1 through 5 passed and target side can run send_event.ps1.',
     steps: [
       'On controller side run <code>python tools/test_evt_flow.py --event HELLO</code>.',
@@ -414,7 +507,51 @@ const mvpSteps = [
       'Expected: controller logs show <code>EVT:HELLO</code> and script leaves waiting state.',
       'Expected: follow-up steps execute and script finishes.'
     ],
-    tip: 'For advanced cases, keep stable event names and append payload fields gradually.'
+    tip: 'New submissions no longer enter EVT Pool buckets. Observe running/queued state through /script/status.'
+  },
+  {
+    n: 7,
+    color: '#22c55e',
+    title: 'FIFO, same-image and clear verification',
+    desc: 'Validate active-only conditions, fresh capture generations and nonblocking IMG delivery during later imports.',
+    prereq: 'Use isolated automated fixtures before any hardware replay. Clear deletes visual data and queued scripts.',
+    steps: [
+      'Run <code>server/env/Scripts/python.exe -m unittest discover -s tools -p test_clear_command.py -v</code>.',
+      'Queue A/B/C; verify only the current job is armed and matching the same persistent image requires fresh captures/runtime in each job.',
+      'Verify IMG-to-KBD delivery continues while a later bundle holds the submission lock; stale ownership is still rejected.',
+      'Verify EVT/IMG remains waiting without deadline or automatic pause. Manually PAUSE: later jobs stay queued and conditions disarm. RESUME must rearm fresh runtime without replaying earlier actions; stop/clear discards the suspended job and queue.',
+      'Submit the clear management object and verify empty queues/pools, durable conditions removal and workspace_cleared on connected browsers.'
+    ],
+    tip: 'No real serial or camera access is required by the isolated backend regression suite.'
+  },
+  {
+    n: 8,
+    color: '#2dd4bf',
+    title: 'OCR and variable verification',
+    desc: 'Validate strict digits, leading zeros, fresh-frame stability, script/loop isolation and cancellation.',
+    prereq: 'Actual OCR requires pytesseract plus external Tesseract and English trained data; mocks do not validate capture accuracy.',
+    steps: [
+      'Run <code>server/env/Scripts/python.exe -m unittest discover -s tools -p test_ocr_digits.py -v</code>.',
+      'From SNAP OCR select only the digits, test fresh recognition, add OCR then KBD TYPE <code>${digits}</code> and a separate KEY/ENTER if needed.',
+      'Verify 0037 retains its leading zeros, malformed/missing variables stop before typing, and stop/clear cannot send a late result.',
+      'Export/import and verify inline ROI/settings survive removal of the setup SNAP.'
+    ],
+    tip: 'The preview endpoint does not assign script variables. Physical OCR accuracy requires real capture-card calibration.'
+  },
+  {
+    n: 9,
+    color: '#38bdf8',
+    title: 'Absolute HID and IMAGE_MOVE verification',
+    desc: 'Separate pure search/serial-safety tests from observed physical Windows pointer accuracy.',
+    prereq: 'Updated ATmega32U4 firmware, HID-Project 2.8.4, one Windows display and full-desktop capture without crop/black bars.',
+    steps: [
+      'Through Nano_KB query <code>CAPS</code>, then explicitly test <code>MOUSE:ABS 16384 16384</code>; this moves without clicking.',
+      'Run <code>server/env/Scripts/python.exe -m unittest discover -s tools -p test_image_move.py -v</code> and <code>node --test tools/test_script_editor.cjs</code>.',
+      'SNAP MOV: Test Locate must show the unique target center and score without serial access. Duplicate targets must fail until the search region is narrowed.',
+      'On controlled Windows open <a href="/static/click-target.html">/static/click-target.html</a> full-screen. Run IMAGE_MOVE: cursor moves but click count stays unchanged. Add a separate CLICK/DBLCLICK with L/R and verify its action.',
+      'Repeat at corners/center and intended DPI/capture resolutions. Verify FIFO order, stop/clear during search or queued click, late serial-lock cancellation, and schema 5 export/import.'
+    ],
+    tip: 'The user confirmed center positioning; full physical IMAGE_MOVE acceptance is user-run and must not be inferred from software tests.'
   }
 ];
 

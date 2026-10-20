@@ -119,7 +119,6 @@ Open:
 - `CAMERA_WIDTH` (default `1280`)
 - `CAMERA_HEIGHT` (default `720`)
 - `JPEG_QUALITY` (default `75`)
-- `DEFAULT_EVT_TIMEOUT_MS` (default `30000`)
 - `TESSERACT_CMD` (optional full path to `tesseract.exe`; required if OCR engine cannot be found automatically)
 
 ---
@@ -172,21 +171,42 @@ service ready for script input
 - An HTTP success response means imported/enqueued, not execution completed. `/script/status` reports the active runner and number of queued scripts.
 - Only the active script runs its steps and waits for its events. A waiting for an image blocks B and C even if their images are already visible.
 - New submissions no longer enter the EVT Pool. Legacy pool endpoints remain available for compatibility.
-- An EVT timeout aborts the current script and the runner advances to the next queued script, as before. A script with `loop: true` keeps its turn until stopped; `/script/stop` and the clear command also discard queued scripts.
+- The right-hand **FIFO Queue** summary replaces the obsolete EVT Pool panel. It shows Idle/Running/Waiting/Paused, the current waiting/paused event and step, and the number of later queued scripts (excluding the active job). It is read-only, not an event history or a queue editor. `/script/status.waiting` restores the active wait after reload; WebSocket transitions and status polling keep the summary current. Stop/clear resets it to Idle and zero queued.
+- EVT/IMG gates wait indefinitely until they match. There is no automatic timeout, countdown or automatic pause; the old `DEFAULT_EVT_TIMEOUT_MS` environment setting no longer controls script waits. Later jobs remain queued while the current gate waits.
+- Use **PAUSE** / **PAUSE ACTIVE** or `POST /script/pause` to suspend the active FIFO at safe checkpoints. Current conditions are disarmed, not deleted. **RESUME** / **RESUME ACTIVE** or `POST /script/resume` continues the same step without replaying earlier KBD/SRV/MSE actions. Events buffered for the waiting gate during pause are discarded; condition hit counts/cooldown reset on resume.
+- `/script/status` includes `paused` and manual `pause` metadata with unique `pause_id`, active job, optional event/step and timestamp. `running` stays true while suspended. RESUME must echo that pause_id; missing/stale IDs, duplicate resume or no paused job return 409. WebSocket `script_paused` / `script_resumed` and status polling restore the UI after reload, while superseded polls cannot restore a stopped pause.
+- Manual pause freezes script delays and prevents later queued KBM writes. Already dispatched hardware actions cannot be recalled; in-progress recognition or servo operations may finish, but later script work waits for resume. Pause at a terminal job transition returns 409; try again after the next job becomes active. OCR/IMAGE_MOVE retain their separate recognition/search safety timeouts; those do not trigger automatic PAUSED state.
+- `/script/stop` and clear cancel the paused job and discard queued jobs. Other fatal execution failures keep their existing behavior; this pause policy specifically covers EVT/IMG waits. A script with `loop: true` otherwise keeps its turn until stopped.
 - Invalid servo mapping IDs are rejected before enqueueing. Unexpected per-script initialization/execution errors are reported without stranding later queued scripts.
 
-### 3) Visual Monitor
+### 3) Script Editor: Edit / Execution Status
+
+- **Edit** retains the local draft. **Execution Status** is a separate read-only view of submitted work and never loads steps into the draft. KBD TYPE text is shown in full (not masked), escaped as text; avoid sharing this screen if scripts contain secrets.
+- Each `/script/run` submission returns a generated `job_id`. An optional top-level `name` (1-80 characters) appears in the job selector; unnamed jobs show a shortened ID. The backend cannot infer the filename used by curl `@file.json`. The editor's optional Name field is preserved on export/import.
+- **Follow Active** selects the active job as FIFO advances. Selecting a queued job turns follow off and previews immutable submitted steps without arming conditions, changing order or running anything. No job editing, reorder, delete, rerun or history database is provided.
+- The view highlights current/completed/failed/pending steps, loop iteration and waiting/recognition/location phase. EVT/IMG shows **no timeout**; remaining time applies only to bounded OCR/image search. It includes OCR results, IMAGE_MOVE centers/HID coordinates and condition name/ROI/score/threshold/hits; thumbnails use matching SNAP data when still available. Queued condition previews show inactive status and no borrowed live runtime from another job.
+- `/script/status.runtime` and WebSocket `script_runtime` supply lightweight, revisioned metadata (active job and queued list, no full steps/templates). `GET /script/jobs/{job_id}` returns read-only step/condition detail; inline template base64 is omitted. Old/retired sessions and superseded detail requests are rejected client-side.
+- Status polling while this view is open refreshes condition scores and countdowns. Refresh/reconnect restores current submitted work; the local editing draft is not persisted by this feature. Completed jobs are removed rather than retained as history. Stop/clear removes the active/queued records; clear also resets the editor as before.
+- **STOP** cancels the active job and clears FIFO; **PAUSE ACTIVE / RESUME ACTIVE** control the active job, never the selected queued preview. Manual resume remains pause_id-bound; hardware cancellation guards are preserved.
+
+Example named request:
+
+```json
+{"name":"Unlock dialog","steps":[{"type":"evt","evt":"HELLO"},{"type":"kbd","cmd_type":"TYPE","text":"0037"}]}
+```
+
+### 4) Visual Monitor
 
 - Condition evaluates at about 3 fps
 - On match edge, emits `IMG.MATCH.<condition_id>`
 - Broadcasts visual events by websocket
 - Imported conditions stay disarmed until their script becomes active. Only that script's imported or referenced conditions can be armed during its turn; manually arming another condition during execution has no effect.
-- At every script boundary, old visual events are discarded. Active conditions receive fresh hit counts, edge state and cooldown, and are disarmed when the script finishes, times out or is cancelled.
+- At every script boundary, old visual events are discarded. Active conditions receive fresh hit counts, edge state and cooldown. Manual pause disarms them while retaining the same job; resume rearms fresh runtime. Merely waiting never times out or disarms a condition. Completion/cancellation disarms them before a job ends.
 - If A and B use the same image, B can match the image still on screen after A completes. B must accumulate its own `min_hits` through fresh evaluations; it never reuses A's match event or runtime. Disappearance/reappearance is not required.
 - Each hit must use a distinct camera capture newer than condition activation. Re-reading one cached frame while the camera is stalled cannot satisfy `min_hits` or trigger the next script.
 - Importing identical image bundles creates independent snapshot/condition IDs. Scripts referencing the same existing condition ID also receive fresh runtime on each turn.
 
-### 4) Auto Attach Servo in Script Mode
+### 5) Auto Attach Servo in Script Mode
 
 - When a queued script becomes active, required servo IDs are auto-attached if pin mapping exists
 - Queued scripts do not attach servos ahead of their turn
@@ -282,44 +302,45 @@ Bundle import behavior:
 
 ## Curl Examples
 
-### Image search and absolute click (Windows)
+### Image search and absolute movement (Windows)
 
 Prerequisites: the confirmed Pro Micro `MOUSE:ABS` firmware, one Windows display, a capture-card image of the entire desktop with no borders/cropping, and matching source/capture aspect ratio. Keep the target layout stable during locate/move/click. Legacy MOVE/MOVE_TO behavior is unchanged.
 
-1. Take a SNAP and select **Click**. Draw around a distinctive target. Set threshold, stable samples, timeout and L/R/M button; **Search ROI** is normalized `[left, top, width, height]` (default full frame).
+1. Take a SNAP and select **MOV**. Draw around a distinctive target. Set threshold, stable samples and timeout; **Search ROI** is normalized `[left, top, width, height]` (default full frame). Image movement has no button setting and never clicks automatically.
 2. **Test Locate** searches fresh captures and displays the match box, pixel center, normalized HID center and annotated image. It never moves or clicks.
-3. **Add Step** creates `MSE / IMAGE_CLICK`. Alternatively add MSE, select IMAGE_CLICK and configure the target. **Target** reopens settings; drawing a new rectangle replaces the stored template, otherwise its embedded template is preserved.
-4. Export/import or submit the JSON through `/script/run`. Schema version 4 embeds a cropped PNG, original frame dimensions and all settings in `image_click`; it does not depend on a SNAP ID or an IMG condition.
+3. **Add Step** creates `MSE / IMAGE_MOVE`. Alternatively add MSE, select IMAGE_MOVE and configure the target. **Target** reopens settings; drawing a new rectangle replaces the stored template, otherwise its embedded template is preserved.
+4. Add a separate MSE **CLICK** or **DBLCLICK** step with L/R/M as needed. Its delay controls the interval after movement. Export/import or submit through `/script/run`; schema version 5 embeds the PNG, frame dimensions and settings in `image_move`, independent of SNAP IDs and IMG conditions.
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "steps": [{
     "type": "mse",
-    "action": "IMAGE_CLICK",
+    "action": "IMAGE_MOVE",
     "delay_ms": 0,
-    "image_click": {
+    "image_move": {
       "template_b64": "<PNG base64 produced by SNAP selection>",
       "source_width": 1280,
       "source_height": 720,
       "search_roi": [0, 0, 1, 1],
       "threshold": 0.92,
       "timeout_ms": 5000,
-      "stable_hits": 2,
-      "button": "L"
+      "stable_hits": 2
     }
-  }]
+  }, {"type":"mse","action":"DBLCLICK","btn":"L","delay_ms":100}]
 }
 ```
 
-The placeholder above is explanatory, not an executable template. Use exported JSON for real runs. Each stable sample must be a distinct capture newer than step start. Multiple spatially distinct matches, a low-detail template, an aspect-ratio change or timeout aborts the current job. Narrow the search ROI instead of permitting arbitrary selection among duplicates. Only a successful `MOUSE:ABS` ACK permits the separate click; a 100ms settling interval allows cancellation. Stop/clear also prevents serial writes still queued behind the KBM lock. Commands already written to hardware cannot be recalled. Other FIFO jobs retain their order.
+The placeholder above is explanatory, not an executable template. Use exported JSON for real runs. Each stable sample must be a distinct capture newer than step start. Multiple matches, a low-detail template, aspect-ratio change or timeout aborts the current job. Narrow the search ROI instead of arbitrarily choosing duplicates. IMAGE_MOVE sends only MOUSE:ABS and requires OK; failure prevents later steps. CLICK/DBLCLICK are independent steps operating at the cursor's current position, so keep their interval short and avoid other pointer/window changes. All MSE serial writes have cancellation guards; stop/clear prevents queued late writes, but cannot recall transmitted commands. Other FIFO jobs retain their order.
+
+IMAGE_CLICK and its old API/configuration are removed, not retained as aliases. Old IMAGE_CLICK imports/submissions are rejected rather than silently becoming movement or clicking. Recreate/export them using MOV and optional separate CLICK/DBLCLICK. Pro Micro firmware requires no change for this split.
 
 **Windows physical acceptance:** On the controlled Windows PC, open `http://<controller-IP>:8000/static/click-target.html` and make the browser full-screen. Keep Windows in single-display mode, disable any capture-card scaling/cropping, and do not move the physical mouse during the run. The page has nine distinct visual targets and records the target, pixel coordinates and HID coordinates received from actual clicks.
 
 - Select a target from SNAP, use Test Locate, and check the preview center is inside that target.
-- Run one IMAGE_CLICK and confirm the controlled page's counter increments once and records the correct target.
+- Run one IMAGE_MOVE and confirm only the cursor moves; the page's click counter must not increment. Then run a separate CLICK or DBLCLICK with L/R and verify the expected action.
 - Repeat at top-left, center and bottom-right, then at the Windows DPI settings and capture resolutions you intend to use.
-- Submit A/B/C image-click scripts and confirm target order. Test stop/clear while searching with a deliberately absent target: no later clicks or queued script actions should occur.
+- Submit A/B/C image-move scripts and confirm target order. Test stop/clear while searching with a deliberately absent target: no later clicks or queued script actions should occur.
 - Duplicate the target on screen and confirm Test Locate rejects ambiguity; then narrow Search ROI and confirm a unique result.
 
 The page itself sends no serial commands. Browser automation/mock-frame tests verify the software path, not physical HID accuracy; actual Windows/capture-card acceptance must be observed on the controlled PC.
@@ -378,6 +399,16 @@ curl.exe -X POST http://127.0.0.1:8000/script/run ^
 ```bash
 curl.exe -X POST http://127.0.0.1:8000/script/stop
 ```
+
+### Manually pause and resume the FIFO
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/script/pause
+$status = Invoke-RestMethod http://127.0.0.1:8000/script/status
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/script/resume -ContentType 'application/json' -Body (@{pause_id=$status.pause.pause_id} | ConvertTo-Json)
+```
+
+The RESUME button supplies the ID automatically. This does not resubmit or restart the script. EVT/IMG waits indefinitely until matched or manually paused/stopped; resume continues the same step. Stop/clear discards the suspended job and its queue. The old retry endpoint is replaced by pause/resume. Restart the backend and refresh the browser to load this policy and controls.
 
 ### Clear snapshots, conditions and scripts
 
@@ -542,5 +573,6 @@ curl.exe http://127.0.0.1:8000/script/status
 - `server/env/Scripts/python.exe -m unittest discover -s tools -p test_clear_command.py -v`
 - `node --test tools/test_script_editor.cjs`
 - `server/env/Scripts/python.exe -m unittest discover -s tools -p test_ocr_digits.py -v`
-- `server/env/Scripts/python.exe -m unittest discover -s tools -p test_image_click.py -v`
+- `server/env/Scripts/python.exe -m unittest discover -s tools -p test_image_move.py -v`
+- `server/env/Scripts/python.exe -m unittest discover -s tools -p test_script_runtime.py -v`
 - `powershell -ExecutionPolicy Bypass -File .\tools\send_event.ps1`

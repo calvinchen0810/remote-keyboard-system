@@ -43,7 +43,8 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from keyboard_serial import KeyboardSerial
 from ocr_digits import OcrConfig, OcrUnavailable, crop_roi, ensure_available, expand_variables, read_stable_digits
-from image_click import AmbiguousMatch, ImageClickConfig, ImageMatch, locate_image
+from image_move import AmbiguousMatch, ImageMoveConfig, ImageMatch, locate_image
+from script_runtime import ScriptRuntime
 from servo_router import create_servo_router
 
 logging.basicConfig(
@@ -72,8 +73,11 @@ current_camera_index: Optional[int] = None
 _script_queue: asyncio.Queue["MixedScriptRequest"] = asyncio.Queue()
 _script_runner_task: Optional[asyncio.Task] = None
 _script_control_lock = asyncio.Lock()
-
-DEFAULT_EVT_TIMEOUT_MS = int(os.getenv("DEFAULT_EVT_TIMEOUT_MS", "30000"))
+_script_pause: Optional[dict] = None
+_script_resume_event: Optional[asyncio.Event] = None
+_script_pause_generation = 0
+_script_wait: Optional[dict] = None
+script_runtime = ScriptRuntime()
 
 
 def _data_dir() -> str:
@@ -500,6 +504,10 @@ class EventBus:
             self._events = deque(event for event in self._events
                                  if not self._normalize(event).startswith("IMG.MATCH."))
 
+    async def discard(self, expected: str):
+        async with self._lock:
+            self._events = deque(event for event in self._events if not self._match(expected, event))
+
     async def consume_if_available(self, expected: str) -> Optional[str]:
         async with self._lock:
             for idx, actual in enumerate(self._events):
@@ -516,20 +524,21 @@ class EventBus:
         except Exception:
             pass
 
-    async def wait_for(self, expected: str, timeout_ms: Optional[int] = None) -> str:
-        timeout_s = (timeout_ms or DEFAULT_EVT_TIMEOUT_MS) / 1000
-        deadline = asyncio.get_running_loop().time() + timeout_s
+    async def wait_for(self, expected: str, timeout_ms: Optional[int] = None, *, wait_gate=None, allow_consume=None) -> str:
+        deadline = None if timeout_ms is None else asyncio.get_running_loop().time() + timeout_ms / 1000
         while True:
+            if wait_gate is not None:
+                await wait_gate()
             async with self._lock:
                 for idx, actual in enumerate(self._events):
-                    if self._match(expected, actual):
+                    if (allow_consume is None or allow_consume()) and self._match(expected, actual):
                         match = self._events[idx]
                         del self._events[idx]
                         return match
-            remain = deadline - asyncio.get_running_loop().time()
-            if remain <= 0:
+            remain = None if deadline is None else deadline - asyncio.get_running_loop().time()
+            if remain is not None and remain <= 0:
                 raise TimeoutError(f"EVT timeout waiting for {expected}")
-            await asyncio.sleep(min(0.05, remain))
+            await asyncio.sleep(0.05 if remain is None else min(0.05, remain))
 
 
 event_bus = EventBus()
@@ -729,10 +738,22 @@ async def _notify_pool_snapshot():
     await kbm_ws.broadcast({"type": "script_pool", **snap})
     srv_ws.broadcast_sync({"type": "script_pool", **snap})
 
+async def _notify_runtime():
+    await kbm_ws.broadcast({"type": "script_runtime", "runtime": script_runtime.snapshot()})
+
+
+def _register_runtime_job(req: "MixedScriptRequest"):
+    req.job_id = script_runtime.enqueue(name=req.name,
+        steps=[step.model_dump(exclude_none=True) for step in req.steps],
+        loop=req.loop, condition_ids=req.condition_ids)
+
 
 async def _activate_script(req: "MixedScriptRequest") -> int:
+    _register_runtime_job(req)
+    queued_request = req.model_copy(deep=True)
     await _ensure_script_runner()
-    await _script_queue.put(req)
+    await _script_queue.put(queued_request)
+    await _notify_runtime()
     return _script_queue.qsize()
 
 
@@ -744,6 +765,7 @@ async def _auto_attach_servos(req: "MixedScriptRequest"):
     used_sids = {s.servo_id for s in req.steps if s.type == "srv" and s.servo_id}
     pin_map   = {int(k): v for k, v in (req.servos or {}).items()}
     for sid in sorted(used_sids):
+        await _await_script_resume()
         if sid in srv_serial.attached:
             continue
         pin = pin_map.get(sid)
@@ -769,7 +791,6 @@ async def _release_pending_scripts(evt: str, source: str):
     released_ids = []
     released_cnt = 0
     for item in released:
-        await _auto_attach_servos(item["req"])
         await _activate_script(item["req"])
         released_cnt += 1
         released_ids.append(item["id"])
@@ -1180,18 +1201,23 @@ class MixedStep(BaseModel):
     variable:    str = Field(default="digits", pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,31}$")
     timeout_ms:  int = Field(default=5000, ge=100, le=60000)
     stable_hits: int = Field(default=2, ge=1, le=10)
-    image_click: Optional[ImageClickConfig] = None
+    image_move: Optional[ImageMoveConfig] = None
 
     @model_validator(mode="after")
     def validate_ocr(self):
         if self.type == "ocr":
             OcrConfig.model_validate(self.model_dump())
-        if self.type == "mse" and (self.action or "").upper() == "IMAGE_CLICK":
-            if self.image_click is None or self.cmd:
-                raise ValueError("IMAGE_CLICK requires image_click settings and cannot use a raw cmd")
+        if self.type == "mse":
+            action = (self.action or "MOVE").upper()
+            if action not in {"MOVE", "MOVE_TO", "CLICK", "DBLCLICK", "SCROLL", "DOWN", "UP", "IMAGE_MOVE"}:
+                raise ValueError("Unsupported mouse action; use IMAGE_MOVE followed by CLICK or DBLCLICK")
+            if action == "IMAGE_MOVE" and (self.image_move is None or self.cmd):
+                raise ValueError("IMAGE_MOVE requires image_move settings and cannot use a raw cmd")
         return self
 
 class MixedScriptRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    job_id: Optional[str] = Field(default=None, exclude=True)
     steps:       list[MixedStep] = Field(default_factory=list, max_length=200)
     loop:        bool            = False
     condition_ids: list[str] = Field(default_factory=list, exclude=True)
@@ -1220,6 +1246,7 @@ class ScriptImgBundle(BaseModel):
 
 
 class ScriptBundleImportRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
     loop: bool = False
     servos: dict[str, int] = Field(default_factory=dict)
     attach_cmds: list[str] = Field(default_factory=list)
@@ -1283,58 +1310,86 @@ def _normalize_script_request(req: MixedScriptRequest) -> MixedScriptRequest:
 # ═══════════════════════════════════════════════════════════════
 #  Mixed Script 後端執行引擎
 # ═══════════════════════════════════════════════════════════════
+async def _await_script_resume():
+    while _script_pause is not None:
+        resume = _script_resume_event
+        if resume is None:
+            await asyncio.sleep(0)
+        else:
+            await resume.wait()
+
+
+async def _script_sleep(seconds: float):
+    remaining = seconds
+    loop = asyncio.get_running_loop()
+    while remaining > 0:
+        await _await_script_resume()
+        started = loop.time()
+        await asyncio.sleep(min(0.05, remaining))
+        remaining -= loop.time() - started
+    await _await_script_resume()
+
+
 async def _wait_for_step_event(step: MixedStep, idx: int, total: int) -> bool:
+    global _script_wait
     if not step.evt:
         return True
-    await kbm_ws.broadcast({
-        "type": "script_wait",
-        "step": idx,
-        "total": total,
-        "evt": step.evt,
-    })
-    srv_ws.broadcast_sync({
-        "type": "status",
-        "state": "waiting",
-        "step": idx,
-        "total": total,
-    })
+    _script_wait = {"evt": step.evt, "step": idx, "total": total}
     try:
-        matched = await event_bus.wait_for(step.evt)
-        logger.info(f"[EVT] step={idx} satisfied: {matched}")
-        await kbm_ws.broadcast({
-            "type": "script_event",
-            "step": idx,
-            "total": total,
-            "evt": matched,
-        })
-        return True
-    except TimeoutError as exc:
-        logger.warning(f"[EVT] step={idx} TIMEOUT waiting for: {step.evt}")
-        await kbm_ws.broadcast({
-            "type": "script_error",
-            "step": idx,
-            "message": str(exc),
-        })
-        srv_ws.broadcast_sync({"type": "status", "state": "idle"})
-        return False
+        while True:
+            await _await_script_resume()
+            script_runtime.set_phase("waiting")
+            await _notify_runtime()
+            await kbm_ws.broadcast({"type": "script_wait", "step": idx, "total": total, "evt": step.evt})
+            srv_ws.broadcast_sync({"type": "status", "state": "waiting", "step": idx, "total": total})
+            consumed_generation = _script_pause_generation
+
+            def allow_event():
+                nonlocal consumed_generation
+                consumed_generation = _script_pause_generation
+                return _script_pause is None
+
+            matched = await event_bus.wait_for(step.evt, wait_gate=_await_script_resume, allow_consume=allow_event)
+            await _await_script_resume()
+            logger.info(f"[EVT] step={idx} satisfied: {matched}")
+            script_runtime.set_phase("running")
+            await _notify_runtime()
+            await kbm_ws.broadcast({"type": "script_event", "step": idx, "total": total, "evt": matched})
+            await _await_script_resume()
+            if consumed_generation != _script_pause_generation:
+                continue
+            _script_wait = None
+            return True
+    finally:
+        _script_wait = None
 
 
-async def _run_image_click(config: ImageClickConfig) -> ImageMatch:
+async def _send_kbm_command(command: str):
     cancelled = threading.Event()
     loop = asyncio.get_running_loop()
     try:
-        result = await locate_image(config, frame_buffer)
-        commands = [f"MOUSE:ABS {result.hid[0]} {result.hid[1]}", f"MOUSE:CLICK {config.button}"]
-        for index, command in enumerate(commands):
-            if index:
-                await asyncio.sleep(0.1)
+        while True:
+            await _await_script_resume()
             status = await loop.run_in_executor(executor,
-                lambda outbound=command: kb_serial.send(outbound, allow_send=lambda: not cancelled.is_set()))
-            if status != "OK":
-                raise RuntimeError(f"IMAGE_CLICK {command.split()[0]} failed: {status}; no further commands sent")
-        return result
+                lambda: kb_serial.send(command, allow_send=lambda: not cancelled.is_set() and _script_pause is None))
+            if status == "CANCELLED" and not cancelled.is_set():
+                continue
+            await _await_script_resume()
+            return status
     finally:
         cancelled.set()
+
+
+async def _send_mouse_command(command: str):
+    status = await _send_kbm_command(command)
+    if status != "OK":
+        raise RuntimeError(f"MSE {command.split()[0]} failed: {status}; no further commands sent")
+
+
+async def _run_image_move(config: ImageMoveConfig) -> ImageMatch:
+    result = await locate_image(config, frame_buffer)
+    await _send_mouse_command(f"MOUSE:ABS {result.hid[0]} {result.hid[1]}")
+    return result
 
 
 async def _run_mixed_script(req: MixedScriptRequest):
@@ -1352,8 +1407,14 @@ async def _run_mixed_script(req: MixedScriptRequest):
     iteration = 0
     try:
         while True:
+            await _await_script_resume()
+            script_runtime.begin_iteration(iteration)
             variables: dict[str, str] = {}
             for i, step in enumerate(req.steps):
+                await _await_script_resume()
+                step_result = None
+                script_runtime.start_step(i, "delay" if step.delay_ms > 0 and step.type != "evt" else "running")
+                await _notify_runtime()
                 # 進度廣播
                 await kbm_ws.broadcast({
                     "type":      "script_progress",
@@ -1369,29 +1430,42 @@ async def _run_mixed_script(req: MixedScriptRequest):
                     "step":  i,
                     "total": total,
                 })
+                await _await_script_resume()
 
                 if step.type == "evt":
                     logger.info(f"[STEP {i+1}/{total}] EVT wait: {step.evt}")
                     ok_evt = await _wait_for_step_event(step, i, total)
+                    await _await_script_resume()
                     if not ok_evt:
                         return
 
                 # delay
                 if step.delay_ms > 0:
-                    await asyncio.sleep(step.delay_ms / 1000)
+                    await _script_sleep(step.delay_ms / 1000)
 
                 if step.type == "evt":
+                    await _await_script_resume()
+                    script_runtime.complete_step(i)
+                    await _notify_runtime()
                     continue
 
                 # 執行
                 if step.type == "ocr":
+                    script_runtime.set_phase("recognizing", deadline=time.time() + step.timeout_ms / 1000)
+                    await _notify_runtime()
+                    await _await_script_resume()
                     variables.pop(step.variable, None)
                     config = OcrConfig.model_validate(step.model_dump())
                     variables[step.variable] = await read_stable_digits(config, frame_buffer)
+                    await _await_script_resume()
+                    step_result = {"variable": step.variable, "value": variables[step.variable]}
                     await kbm_ws.broadcast({"type": "ocr_result", "step": i,
                                             "variable": step.variable, "value": variables[step.variable]})
 
                 elif step.type == "srv":
+                    script_runtime.set_phase("running")
+                    await _notify_runtime()
+                    await _await_script_resume()
                     params = {
                         "delay_ms":    0,
                         "servo_id":    step.servo_id or 1,
@@ -1411,8 +1485,9 @@ async def _run_mixed_script(req: MixedScriptRequest):
                     hold = (step.duration_ms or 300)
                     angle = (step.angle or 90)
                     wait_s = hold / 1000 + angle * 0.01 + 0.25
-                    await asyncio.sleep(wait_s)
+                    await _script_sleep(wait_s)
                     if not ok:
+                        script_runtime.note_error(f"SRV step {i} failed")
                         logger.warning(f"[STEP {i+1}/{total}] SRV failed")
                         await kbm_ws.broadcast({
                             "type": "script_error",
@@ -1421,12 +1496,13 @@ async def _run_mixed_script(req: MixedScriptRequest):
                         })
 
                 elif step.type == "kbd":
+                    script_runtime.set_phase("running")
+                    await _notify_runtime()
                     cmd = _resolve_kbd_cmd(step, variables)
                     logger.info(f"[STEP {i+1}/{total}] KBD {cmd}")
-                    result = await loop.run_in_executor(
-                        executor, kb_serial.send, cmd
-                    )
+                    result = await _send_kbm_command(cmd)
                     if result != "OK":
+                        script_runtime.note_error(f"KBD ACK: {result}")
                         logger.warning(f"[STEP {i+1}/{total}] KBD ACK={result} cmd={cmd}")
                         await kbm_ws.broadcast({
                             "type": "script_error",
@@ -1435,29 +1511,32 @@ async def _run_mixed_script(req: MixedScriptRequest):
                         })
 
                 elif step.type == "mse":
-                    if (step.action or "").upper() == "IMAGE_CLICK":
-                        result = await _run_image_click(step.image_click)
-                        await kbm_ws.broadcast({"type": "image_click_result", "step": i,
+                    if (step.action or "").upper() == "IMAGE_MOVE":
+                        script_runtime.set_phase("locating", deadline=time.time() + step.image_move.timeout_ms / 1000)
+                        await _notify_runtime()
+                        await _await_script_resume()
+                        result = await _run_image_move(step.image_move)
+                        script_runtime.complete_step(i, result.model_dump(exclude={"preview_b64"}))
+                        await _notify_runtime()
+                        await kbm_ws.broadcast({"type": "image_move_result", "step": i,
                                                 "match": result.model_dump(exclude={"preview_b64"})})
                         continue
                     cmd = _resolve_mse_cmd(step)
+                    script_runtime.set_phase("running")
+                    await _notify_runtime()
                     logger.info(f"[STEP {i+1}/{total}] MSE {cmd}")
-                    result = await loop.run_in_executor(
-                        executor, kb_serial.send, cmd
-                    )
-                    if result != "OK":
-                        logger.warning(f"[STEP {i+1}/{total}] MSE ACK={result} cmd={cmd}")
-                        await kbm_ws.broadcast({
-                            "type": "script_error",
-                            "step": i,
-                            "message": f"MSE step {i} ACK: {result} cmd: {cmd}",
-                        })
+                    await _send_mouse_command(cmd)
+
+                await _await_script_resume()
+                script_runtime.complete_step(i, step_result)
+                await _notify_runtime()
 
             iteration += 1
             if not req.loop:
                 break
 
-        # 完成
+        await _await_script_resume()
+        script_runtime.set_phase("finishing")
         await kbm_ws.broadcast({"type": "script_done", "iterations": iteration})
         srv_ws.broadcast_sync({"type": "done", "state": "idle"})
         logger.info(f"Script done: {total} steps × {iteration} iterations")
@@ -1473,20 +1552,35 @@ async def _script_runner():
     global _script_runner_task
     try:
         while True:
+            await _await_script_resume()
             req = await _script_queue.get()
             try:
+                if not script_runtime.contains(req.job_id):
+                    _register_runtime_job(req)
                 await event_bus.clear_visual()
+                await _await_script_resume()
+                script_runtime.activate(req.job_id)
                 condition_manager.activate_only(req.condition_ids)
+                await _notify_runtime()
+                await _await_script_resume()
                 await srv_ws.broadcast({"type": "visual_sync", "reason": "script_activation",
                                         "snapshots": len(snapshot_pool.list_all()),
                                         "conditions": len(condition_manager.list_all())})
+                await _await_script_resume()
                 await _auto_attach_servos(req)
+                await _await_script_resume()
                 await _run_mixed_script(req)
             except Exception as exc:
+                await _await_script_resume()
+                script_runtime.note_error(str(exc))
+                script_runtime.set_phase("finishing")
+                await _notify_runtime()
                 logger.exception("Queued script failed")
                 await kbm_ws.broadcast({"type": "script_error", "message": str(exc), "fatal": True})
                 srv_ws.broadcast_sync({"type": "status", "state": "idle"})
             finally:
+                script_runtime.finish(req.job_id)
+                await _notify_runtime()
                 condition_manager.activate_only(None)
                 await event_bus.clear_visual()
                 _script_queue.task_done()
@@ -1510,7 +1604,8 @@ async def _ensure_script_runner():
 async def _drain_script_queue():
     while True:
         try:
-            _script_queue.get_nowait()
+            req = _script_queue.get_nowait()
+            script_runtime.finish(req.job_id)
             _script_queue.task_done()
         except asyncio.QueueEmpty:
             break
@@ -1644,6 +1739,7 @@ async def _submit_script(payload: dict):
         bundle_result = await _import_script_bundle(bundle_req)
         img_import_summary = bundle_result["img_import"]
         payload = {
+            "name": bundle_result.get("name"),
             "loop": bundle_result["loop"],
             "servos": bundle_result["servos"],
             "attach_cmds": bundle_result["attach_cmds"],
@@ -1679,6 +1775,7 @@ async def _submit_script(payload: dict):
 
     return {
         "ok":    True,
+        "job_id": req.job_id,
         "steps": len(req.steps),
         "loop":  req.loop,
         "pending": False,
@@ -1693,7 +1790,7 @@ async def script_stop():
 
 
 async def _stop_scripts(stop_servos: bool = True):
-    global _script_runner_task
+    global _script_runner_task, _script_pause, _script_resume_event, _script_wait
     runner = _script_runner_task
     if runner and not runner.done():
         runner.cancel()
@@ -1702,7 +1799,12 @@ async def _stop_scripts(stop_servos: bool = True):
         except asyncio.CancelledError:
             pass
     _script_runner_task = None
+    _script_pause = None
+    _script_resume_event = None
+    _script_wait = None
     await _drain_script_queue()
+    script_runtime.clear()
+    await _notify_runtime()
     await event_bus.clear()
     await pending_evt_pool.clear()
     await _notify_pool_snapshot()
@@ -1798,6 +1900,7 @@ async def _import_script_bundle(req: "ScriptBundleImportRequest"):
 
     return {
         "ok": True,
+        "name": req.name,
         "loop": req.loop,
         "servos": req.servos,
         "attach_cmds": req.attach_cmds,
@@ -1809,7 +1912,90 @@ async def _import_script_bundle(req: "ScriptBundleImportRequest"):
 async def script_status():
     running = bool(_script_runner_task and not _script_runner_task.done())
     pending = await pending_evt_pool.snapshot()
-    return {"running": running, "queued": _script_queue.qsize(), "pending": pending}
+    pause = None if _script_pause is None else {**_script_pause,
+        "resuming": bool(_script_resume_event and _script_resume_event.is_set())}
+    return {"running": running, "queued": _script_queue.qsize(), "pending": pending,
+            "paused": pause is not None, "pause": pause,
+            "waiting": dict(_script_wait) if _script_wait is not None else None,
+            "runtime": script_runtime.snapshot()}
+
+
+@app.get("/script/jobs/{job_id}")
+async def script_job_detail(job_id: str):
+    detail = script_runtime.detail(job_id)
+    if detail is None:
+        raise HTTPException(404, "Script job is no longer active or queued")
+    conditions = {condition["condition_id"]: condition for condition in condition_manager.list_all()}
+    detail["conditions"] = []
+    for condition_id in detail["condition_ids"]:
+        condition = conditions.get(condition_id)
+        if condition is None:
+            condition = {"condition_id": condition_id, "name": "Missing condition", "snapshot_id": None,
+                         "roi": [], "enabled": False, "last_score": None, "consecutive_hits": 0, "min_hits": 0}
+        else:
+            condition = dict(condition)
+        if not detail["active"]:
+            condition.update(enabled=False, last_score=None, consecutive_hits=0, in_cooldown=False)
+        detail["conditions"].append(condition)
+    detail["remaining_ms"] = max(0, round((detail["deadline"] - time.time()) * 1000)) if detail["deadline"] is not None else None
+    detail["pause"] = dict(_script_pause) if detail["active"] and _script_pause else None
+    return detail
+
+
+@app.post("/script/pause")
+async def script_pause():
+    global _script_pause, _script_resume_event, _script_pause_generation
+    async with _script_control_lock:
+        active = script_runtime.snapshot()["active"]
+        if (_script_runner_task is None or _script_runner_task.done() or active is None
+                or _script_pause is not None or active["phase"] == "finishing"):
+            raise HTTPException(409, "No running script is available for pause")
+        conditions = [condition.condition_id for condition, _ in condition_manager.get_armed()]
+        _script_pause_generation += 1
+        _script_resume_event = asyncio.Event()
+        _script_pause = {"pause_id": uuid.uuid4().hex, "reason": "manual", "message": "Manually paused",
+            "since": time.time(), "job_id": active["job_id"], "step": active["current_step"],
+            "total": active["total"], "evt": (_script_wait or {}).get("evt"),
+            "previous_phase": active["phase"], "previous_deadline": active["deadline"], "condition_ids": conditions}
+        condition_manager.activate_only([])
+        script_runtime.set_phase("paused")
+        await _notify_runtime()
+        await kbm_ws.broadcast({"type": "script_paused", **_script_pause})
+        await srv_ws.broadcast({"type": "visual_sync", "reason": "script_paused",
+                                "snapshots": len(snapshot_pool.list_all()), "conditions": len(condition_manager.list_all())})
+        return {"ok": True, "pause": dict(_script_pause)}
+
+
+@app.post("/script/resume")
+async def script_resume(request: Request):
+    global _script_pause, _script_resume_event
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(400, "Resume requires a JSON object containing pause_id") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "Resume requires a JSON object containing pause_id")
+    async with _script_control_lock:
+        if (_script_pause is None or _script_resume_event is None or _script_resume_event.is_set()
+                or _script_runner_task is None or _script_runner_task.done()
+                or payload.get("pause_id") != _script_pause["pause_id"]):
+            raise HTTPException(409, "Pause is no longer current; refresh status before resuming")
+        pause = _script_pause
+        resume = _script_resume_event
+        if pause.get("job_id") != script_runtime.active_id:
+            raise HTTPException(409, "Paused job is no longer current")
+        if pause.get("evt"):
+            await event_bus.discard(pause["evt"])
+        condition_manager.activate_only(pause["condition_ids"])
+        _script_pause = None
+        _script_resume_event = None
+        script_runtime.set_phase(pause["previous_phase"], deadline=pause["previous_deadline"])
+        resume.set()
+        await _notify_runtime()
+        await kbm_ws.broadcast({"type": "script_resumed", "evt": pause["evt"], "step": pause["step"], "total": pause["total"]})
+        await srv_ws.broadcast({"type": "visual_sync", "reason": "script_resumed",
+                                "snapshots": len(snapshot_pool.list_all()), "conditions": len(condition_manager.list_all())})
+        return {"ok": True, "resuming": True, "pause_id": pause["pause_id"]}
 
 
 @app.get("/script/pool/{evt}")
@@ -2140,8 +2326,8 @@ class ImageTemplateRequest(BaseModel):
         return self
 
 
-@app.post("/visual/image-click/template")
-async def image_click_template(req: ImageTemplateRequest):
+@app.post("/visual/image-move/template")
+async def image_move_template(req: ImageTemplateRequest):
     snapshot = snapshot_pool.get(req.snapshot_id)
     if snapshot is None:
         raise HTTPException(404, "Snapshot not found")
@@ -2151,15 +2337,15 @@ async def image_click_template(req: ImageTemplateRequest):
         ok, encoded = cv2.imencode(".png", template)
         if not ok:
             raise ValueError("Cannot encode template")
-        config = ImageClickConfig(template_b64=base64.b64encode(encoded).decode(),
+        config = ImageMoveConfig(template_b64=base64.b64encode(encoded).decode(),
                                   source_width=frame.shape[1], source_height=frame.shape[0])
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    return {"ok": True, "image_click": config.model_dump()}
+    return {"ok": True, "image_move": config.model_dump()}
 
 
-@app.post("/visual/image-click/test")
-async def image_click_test(req: ImageClickConfig):
+@app.post("/visual/image-move/test")
+async def image_move_test(req: ImageMoveConfig):
     try:
         result = await locate_image(req, frame_buffer, preview=True)
     except AmbiguousMatch as exc:

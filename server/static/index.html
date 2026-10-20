@@ -121,7 +121,26 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 
 /* script */
 #script-col{background:var(--panel);border:1px solid var(--bd);border-radius:var(--r)}
+#script-col [hidden]{display:none!important}
+#script-tabs{display:flex;gap:0;border-bottom:1px solid var(--bd);flex-shrink:0}
+#script-tabs button{background:transparent;border:0;border-bottom:2px solid transparent;color:var(--fg2);font:11px var(--mono);padding:6px 10px;cursor:pointer;border-radius:0}
+#script-tabs button[aria-selected=true]{color:var(--tel);border-bottom-color:var(--tel)}
+#script-edit-pane,#script-runtime-pane{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
+.runtime-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;border-bottom:1px solid var(--bd);flex-shrink:0;font:10px var(--mono)}
+#runtime-jobs{width:100%;height:76px;min-width:0;background:var(--inp);color:var(--fg);font:11px var(--mono);border:1px solid var(--bd);border-radius:var(--r)}
+#runtime-meta{width:100%;overflow-wrap:anywhere;line-height:1.5;color:var(--fg2)}
+#runtime-content{flex:1;min-height:0;overflow:auto;padding:6px 8px;font:11px var(--mono)}
+.runtime-steps{width:100%;table-layout:fixed;border-collapse:collapse;margin-bottom:10px}
+.runtime-steps th,.runtime-steps td{border-bottom:1px solid var(--bd);padding:5px 4px;vertical-align:top;text-align:left;overflow-wrap:anywhere}
+.runtime-steps th{color:var(--fg3);font-weight:normal;font-size:10px}
+.runtime-steps tr[data-runtime-state=active]{background:rgba(45,212,191,.1)}
+.runtime-steps tr[data-runtime-state=failed]{color:var(--red)}
+.runtime-param{font:11px var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;margin:0;color:var(--fg)}
+.runtime-result{font-size:10px;color:var(--tel);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:4px}
+.runtime-condition{padding:6px 0;border-bottom:1px solid var(--bd);line-height:1.6;overflow-wrap:anywhere}
+.runtime-condition .snap-thumb{float:left;margin:2px 7px 4px 0}
 #script-tb{display:flex;align-items:center;gap:4px;padding:5px 7px;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--card);flex-wrap:wrap;row-gap:3px}
+#script-resume-btn[hidden]{display:none}
 #tbl-wrap{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0}
 #empty-hint{padding:14px;text-align:center;color:var(--fg3);font-family:var(--mono);font-size:10px}
 .stbl{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px;table-layout:fixed}
@@ -169,7 +188,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 #man-row{display:flex;align-items:center;gap:4px;padding:4px 8px;border-top:1px solid var(--bd);flex-shrink:0}
 #quick-btns{display:flex;gap:4px;padding:5px 8px}
 #prog-badge{font-family:var(--mono);font-size:9px;color:var(--amb);border:1px solid var(--amb);padding:1px 4px;border-radius:2px;margin-left:5px;display:none;animation:pulse 1.5s infinite}
-#evt-pool-body{padding:6px 8px;display:flex;flex-direction:column;gap:4px;max-height:130px;overflow:auto}
+#fifo-queue-body{padding:6px 8px;display:flex;flex-direction:column;gap:4px;max-height:130px;overflow:auto}
+.fifo-event{font-family:var(--mono);font-size:10px;color:var(--blu);overflow-wrap:anywhere;line-height:1.5}
 .evt-head{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:9px;color:var(--fg2)}
 .evt-bucket{border:1px solid var(--bd);border-radius:3px;padding:3px 5px;background:var(--card)}
 .evt-row{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:10px;color:var(--blu)}
@@ -416,7 +436,13 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <div class="ph">Script Editor
     <span id="step-cnt" style="font-size:9px;color:var(--grn2);background:rgba(34,197,94,.08);border:1px solid var(--bd);padding:1px 4px;border-radius:2px;margin-left:2px">0 STEPS</span>
   </div>
+  <div id="script-tabs" role="tablist" aria-label="Script views">
+    <button id="script-edit-tab" role="tab" aria-selected="true" aria-controls="script-edit-pane" onclick="setScriptView('edit')">Edit</button>
+    <button id="script-runtime-tab" role="tab" aria-selected="false" aria-controls="script-runtime-pane" onclick="setScriptView('runtime')">Execution Status</button>
+  </div>
+  <div id="script-edit-pane" role="tabpanel" aria-labelledby="script-edit-tab">
   <div id="script-tb">
+    <input id="script-name" class="ti" aria-label="Script name" placeholder="Name (optional)" maxlength="80" style="width:132px;max-width:100%">
     <button class="btn-a btn-sm" onclick="addSrvStep()">＋ SRV</button>
     <button class="btn-t btn-sm" onclick="editOcrStep(null)">＋ OCR</button>
     <button class="btn-p btn-sm" onclick="addKbdStep()">＋ KBD</button>
@@ -437,6 +463,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     <button class="btn-b btn-sm" onclick="clearAllSteps()">Clear</button>
     <button class="btn-g btn-sm" id="run-btn" onclick="runScript()">▶ RUN</button>
     <button class="btn-r btn-sm" onclick="stopScript()">■ STOP</button>
+    <button class="btn-a btn-sm" id="script-pause-btn" onclick="pauseScript()" title="Pause the active FIFO at a safe boundary" disabled>PAUSE</button>
+    <button class="btn-a btn-sm" id="script-resume-btn" onclick="resumeScript()" title="Continue the manually paused script without replaying earlier steps" hidden>RESUME</button>
   </div>
   <div id="tbl-wrap">
     <table class="stbl">
@@ -455,6 +483,18 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     <span id="sc-prog-lbl" style="font-family:var(--mono);font-size:9px;color:var(--grn);white-space:nowrap">0 / 0</span>
     <div class="prog-tr"><div class="prog-fi" id="sc-prog-fi"></div></div>
     <span id="sc-prog-step" style="font-family:var(--mono);font-size:9px;color:var(--blu);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis"></span>
+  </div>
+  </div>
+  <div id="script-runtime-pane" role="tabpanel" aria-labelledby="script-runtime-tab" hidden>
+    <div class="runtime-controls">
+      <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="runtime-follow" checked onchange="setRuntimeFollow(this.checked)">Follow Active</label>
+      <button class="btn-r btn-sm" onclick="stopScript()" title="Stop the active job and discard the FIFO queue">STOP</button>
+      <button class="btn-a btn-sm" id="runtime-pause-btn" onclick="pauseScript()" title="Pause the active job, not the selected preview" disabled>PAUSE ACTIVE</button>
+      <button class="btn-a btn-sm" id="runtime-resume-btn" onclick="resumeScript()" title="Continue the active paused job, not the selected preview" disabled>RESUME ACTIVE</button>
+      <select id="runtime-jobs" size="3" aria-label="Runtime jobs" onchange="selectRuntimeJob(this.value)"></select>
+      <div id="runtime-meta" role="status" aria-live="polite">No active or queued scripts</div>
+    </div>
+    <div id="runtime-content"><div class="cdim">No active or queued scripts</div></div>
   </div>
 </div>
 
@@ -475,11 +515,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   </div>
 
   <div class="pn" style="flex-shrink:0">
-    <div class="ph">EVT Pool
-      <span id="evt-pool-total" style="font-size:9px;color:var(--blu);margin-left:4px">0</span>
+    <div class="ph">FIFO Queue
+      <span id="fifo-queue-total" title="Queued scripts excluding the active job" style="font-size:9px;color:var(--blu);margin-left:4px">0</span>
     </div>
-    <div id="evt-pool-body">
-      <div class="evt-head"><span>pending</span><span>0</span></div>
+    <div id="fifo-queue-body" aria-live="polite">
+      <div class="evt-head"><span>Idle</span><span>0 queued</span></div>
     </div>
   </div>
 
@@ -652,9 +692,14 @@ let attachedMap={}, pinSettings=[...DEF_PINS];
 let srvWS=null, kbmWS=null;
 let logLines={srv:[],kbm:[]}, activeLog='srv';
 let steps=[], stepIdCnt=0, dragSrc=null;
+let scriptPauseState=null;
+let scriptStatusRevision=0,scriptStatusRequest=0;
+let scriptView='edit',runtimeState={session_id:null,revision:-1,active:null,queued:[]};
+let runtimeSelectedId=null,runtimeFollow=true,runtimeDetailRequest=0,runtimeDetailController=null;
+let runtimeDetailJobId=null,runtimeRetiredSessions=new Set();
 let kbLocked=false, modState={CTRL:false,SHIFT:false,ALT:false,GUI:false};
 let homeVal=1;
-let evtPoolState={total:0,buckets:[]};
+let fifoState={running:false,queued:0,waiting:null,paused:false,pause:null};
 
 // ── Drag resize ──────────────────────────────────────────────
 (()=>{
@@ -788,23 +833,23 @@ function insertKbdVariable(id,name){
   renderSteps();
 }
 function addMseStep(){steps.push({type:'mse',_id:++stepIdCnt,delay_ms:getDefaultDelay(),action:'MOVE',x:0,y:0,btn:'L',amount:3});renderSteps();}
-function validateImageClickSettings(settings){
+function validateImageMoveSettings(settings){
   const common=validateOcrSettings({roi:settings.search_roi??[0,0,1,1],timeout_ms:settings.timeout_ms??5000,stable_hits:settings.stable_hits??2});
   const source_width=Number(settings.source_width),source_height=Number(settings.source_height);
-  const threshold=Number(settings.threshold??0.92),button=settings.button??'L';
+  const threshold=Number(settings.threshold??0.92);
   if(typeof settings.template_b64!=='string'||!settings.template_b64.length||settings.template_b64.length>2800000||settings.template_b64.length%4!==0||!/^[A-Za-z0-9+/]+={0,2}$/.test(settings.template_b64))throw new Error('Select an image template.');
   if(!Number.isInteger(source_width)||!Number.isInteger(source_height)||source_width<16||source_height<16||source_width>8192||source_height>8192)throw new Error('Invalid source image dimensions.');
-  if(!Number.isFinite(threshold)||threshold<0.5||threshold>1||!['L','R','M'].includes(button))throw new Error('Invalid image-click threshold or button.');
+  if(!Number.isFinite(threshold)||threshold<0.5||threshold>1)throw new Error('Invalid image-move threshold.');
   return {template_b64:settings.template_b64,source_width,source_height,search_roi:common.roi,threshold,
-    timeout_ms:common.timeout_ms,stable_hits:common.stable_hits,button};
+    timeout_ms:common.timeout_ms,stable_hits:common.stable_hits};
 }
-function addImageClickStep(settings,id=null){
-  const image_click=validateImageClickSettings(settings);
+function addImageMoveStep(settings,id=null){
+  const image_move=validateImageMoveSettings(settings);
   if(id!==null){
     const step=steps.find(item=>item._id===id&&item.type==='mse');
     if(!step)throw new Error('Mouse step no longer exists.');
-    Object.assign(step,{action:'IMAGE_CLICK',image_click});delete step.cmd;
-  } else steps.push({type:'mse',_id:++stepIdCnt,delay_ms:getDefaultDelay(),action:'IMAGE_CLICK',image_click});
+    Object.assign(step,{action:'IMAGE_MOVE',image_move});delete step.cmd;
+  } else steps.push({type:'mse',_id:++stepIdCnt,delay_ms:getDefaultDelay(),action:'IMAGE_MOVE',image_move});
   renderSteps();
 }
 function addEvtStep(){steps.unshift({type:'evt',_id:++stepIdCnt,delay_ms:0,evt:'HELLO'});renderSteps();}
@@ -812,6 +857,9 @@ function clearAllSteps(){steps=[];renderSteps();}
 function delStep(id){steps=steps.filter(s=>s._id!==id);renderSteps();}
 
 function applyWorkspaceCleared(){
+  resetRuntimeView();
+  const name=document.getElementById('script-name');if(name)name.value='';
+  setScriptPause(null);
   clearAllSteps();
   stepIdCnt=0;dragSrc=null;kbLocked=false;
   document.getElementById('loop-cb').checked=false;
@@ -821,15 +869,192 @@ function applyWorkspaceCleared(){
   snapshots=[];conditions=[];
   closeCondModal();
   renderSnapList();renderCondList();renderImgPicker();
-  setEvtPoolData({total:0,buckets:[]});
+  setFifoQueueData({running:false,queued:0,waiting:null,paused:false,pause:null});
   setProgress(null,null);setProgMsg('Idle');
+}
+
+function setScriptPause(pause){
+  scriptStatusRevision++;
+  scriptPauseState=pause||null;
+  const button=document.getElementById('script-resume-btn');
+  if(button){button.hidden=!pause;button.disabled=!!pause?.resuming;}
+  const runtimeRetry=document.getElementById('runtime-resume-btn');
+  if(runtimeRetry)runtimeRetry.disabled=!pause||!!pause.resuming;
+  syncPauseControls();
+  const badge=document.getElementById('prog-badge');
+  badge.textContent=pause?'PAUSED':'RUNNING';
+  if(!pause)return;
+  badge.style.display='';kbLocked=true;
+  document.getElementById('kb-lock-lbl').style.display='';
+  document.getElementById('kb-lock-msg').style.display='';
+  const position=Number.isInteger(pause.step)?pause.step+1:'-';
+  setProgMsg(`FIFO paused: ${pause.evt?'EVT:'+pause.evt:'manual'} (${position}/${pause.total})`);
+}
+function syncPauseControls(){
+  for(const id of ['script-pause-btn','runtime-pause-btn']){
+    const button=document.getElementById(id);
+    if(button)button.disabled=!fifoState.running||!!scriptPauseState;
+  }
+}
+async function pauseScript(){
+  if(scriptPauseState)return;
+  for(const id of ['script-pause-btn','runtime-pause-btn']){const button=document.getElementById(id);if(button)button.disabled=true;}
+  try{
+    const response=await fetch('/script/pause',{method:'POST'});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.detail||'Pause failed');
+    addLog('srv','FIFO manually paused','crun');
+  }catch(error){addLog('srv',error.message,'cerr');}
+  await refreshScriptStatus();syncPauseControls();
+}
+async function resumeScript(){
+  if(!scriptPauseState||document.getElementById('script-resume-btn').disabled)return;
+  const pause=scriptPauseState;
+  setScriptPause({...pause,resuming:true});
+  try{
+    const response=await fetch('/script/resume',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pause_id:pause.pause_id})});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.detail||'Resume failed');
+    addLog('srv','Resuming script','crun');
+    if(scriptPauseState&&scriptPauseState.pause_id===pause.pause_id&&scriptPauseState.since===pause.since&&scriptPauseState.evt===pause.evt&&scriptPauseState.step===pause.step){
+      setScriptPause({...scriptPauseState,resuming:true});
+    }
+  }catch(error){addLog('srv',error.message,'cerr');}
+  await refreshScriptStatus();
+}
+
+function runtimeJobs(){return [...(runtimeState.active?[runtimeState.active]:[]),...(runtimeState.queued||[])];}
+function setScriptView(view){
+  if(!['edit','runtime'].includes(view))return;
+  scriptView=view;
+  document.getElementById('script-edit-pane').hidden=view!=='edit';
+  document.getElementById('script-runtime-pane').hidden=view!=='runtime';
+  document.getElementById('script-edit-tab').setAttribute('aria-selected',String(view==='edit'));
+  document.getElementById('script-runtime-tab').setAttribute('aria-selected',String(view==='runtime'));
+  document.getElementById('step-cnt').hidden=view==='runtime';
+  if(view==='runtime'){renderRuntimeJobs();refreshScriptStatus();refreshRuntimeDetail();}
+  else{runtimeDetailRequest++;if(runtimeDetailController)runtimeDetailController.abort();}
+}
+function setRuntimeSnapshot(snapshot){
+  if(!snapshot||!Array.isArray(snapshot.queued)||typeof snapshot.revision!=='number')return false;
+  if(runtimeRetiredSessions.has(snapshot.session_id))return false;
+  if(snapshot.session_id===runtimeState.session_id&&snapshot.revision<runtimeState.revision)return false;
+  const changed=snapshot.session_id!==runtimeState.session_id;
+  if(changed||snapshot.revision>runtimeState.revision){scriptStatusRevision++;scriptStatusRequest++;}
+  if(changed){
+    if(runtimeState.session_id)runtimeRetiredSessions.add(runtimeState.session_id);
+    runtimeSelectedId=null;runtimeDetailJobId=null;runtimeDetailRequest++;
+    if(runtimeDetailController)runtimeDetailController.abort();
+  }
+  runtimeState=snapshot;
+  const jobs=runtimeJobs();
+  if(runtimeFollow)runtimeSelectedId=snapshot.active?.job_id||jobs[0]?.job_id||null;
+  else if(!jobs.some(job=>job.job_id===runtimeSelectedId))runtimeSelectedId=jobs[0]?.job_id||null;
+  renderRuntimeJobs();
+  if(scriptView==='runtime')refreshRuntimeDetail();
+  return true;
+}
+function resetRuntimeView(){
+  runtimeDetailRequest++;if(runtimeDetailController)runtimeDetailController.abort();
+  runtimeState={...runtimeState,active:null,queued:[]};runtimeSelectedId=null;runtimeDetailJobId=null;
+  renderRuntimeJobs();
+}
+function setRuntimeFollow(enabled){
+  runtimeFollow=!!enabled;
+  if(runtimeFollow)runtimeSelectedId=runtimeState.active?.job_id||runtimeJobs()[0]?.job_id||null;
+  renderRuntimeJobs();if(scriptView==='runtime')refreshRuntimeDetail();
+}
+function selectRuntimeJob(jobId){
+  if(!runtimeJobs().some(job=>job.job_id===jobId))return;
+  runtimeSelectedId=jobId;runtimeFollow=false;
+  renderRuntimeJobs();if(scriptView==='runtime')refreshRuntimeDetail();
+}
+function renderRuntimeJobs(){
+  const select=document.getElementById('runtime-jobs'),meta=document.getElementById('runtime-meta');
+  if(!select||!meta)return;
+  const jobs=runtimeJobs();
+  select.innerHTML=jobs.map(job=>`<option value="${esc(job.job_id)}"${job.job_id===runtimeSelectedId?' selected':''}>${esc((job.job_id===runtimeState.active?.job_id?'Active: ':'Queued: ')+(job.name||'#'+job.job_id.slice(0,8))+' | '+job.phase+' | '+job.total+' steps')}</option>`).join('');
+  const follow=document.getElementById('runtime-follow');if(follow)follow.checked=runtimeFollow;
+  const selected=jobs.find(job=>job.job_id===runtimeSelectedId);
+  meta.textContent=selected?(selected.name||'#'+selected.job_id.slice(0,8))+' | '+selected.phase+' | '+selected.total+' steps':'No active or queued scripts';
+  if(selected&&runtimeDetailJobId!==selected.job_id)document.getElementById('runtime-content').innerHTML='<div class="cdim">Loading selected job...</div>';
+  if(!selected)document.getElementById('runtime-content').innerHTML='<div class="cdim">No active or queued scripts</div>';
+}
+function runtimeStepText(params){
+  if(params.type==='kbd'){
+    if(params.cmd)return params.cmd;
+    const command=(params.cmd_type||'TYPE').toUpperCase();
+    if(command==='TYPE')return 'TYPE '+(params.text||'');
+    if(command==='KEY')return 'KEY '+(params.key||'ENTER');
+    return 'COMBO '+[params.mod1,params.mod2,params.key||'C'].filter(Boolean).join('+');
+  }
+  if(params.type==='evt')return 'EVT '+(params.evt||'');
+  if(params.type==='ocr')return 'OCR -> '+(params.variable||'digits')+'\nROI '+JSON.stringify(params.roi||[])+'\nSamples '+(params.stable_hits??2)+' | timeout '+(params.timeout_ms??5000)+'ms';
+  if(params.type==='mse'&&params.action==='IMAGE_MOVE'){
+    const config=params.image_move||{};
+    return 'IMAGE_MOVE\nSearch '+JSON.stringify(config.search_roi||[0,0,1,1])+'\nThreshold '+(config.threshold??0.92)+' | samples '+(config.stable_hits??2)+'\nTimeout '+(config.timeout_ms??5000)+'ms | source '+config.source_width+'x'+config.source_height;
+  }
+  if(params.type==='srv')return 'S'+(params.servo_id??1)+' angle '+(params.angle??90)+' | speed '+(params.speed??60)+'\nHold '+(params.duration_ms??300)+'ms | home '+(params.home??1);
+  if(params.type==='mse'){
+    if(params.cmd)return params.cmd;
+    const action=params.action||'MOVE';
+    if(['CLICK','DBLCLICK','DOWN','UP'].includes(action))return action+' '+(params.btn||'L');
+    if(action==='SCROLL')return 'SCROLL '+(params.amount??3);
+    return action+' x='+ (params.x??0)+' y='+(params.y??0);
+  }
+  return JSON.stringify(Object.fromEntries(Object.entries(params).filter(([key,value])=>value!=null&&!['type','image_move'].includes(key))),null,2);
+}
+function runtimeResultText(result){
+  if(result&&typeof result==='object'&&'variable' in result)return result.variable+' = '+result.value;
+  if(result?.center&&result?.hid)return 'Center ('+result.center.join(', ')+')\nHID ('+result.hid.join(', ')+') | score '+result.score;
+  return JSON.stringify(result);
+}
+function renderRuntimeDetail(detail){
+  if(!detail||detail.job_id!==runtimeSelectedId)return;
+  const content=document.getElementById('runtime-content');
+  if(!content)return;
+  runtimeDetailJobId=detail.job_id;
+  const remaining=detail.phase==='waiting'?' | no timeout':detail.remaining_ms==null?'':` | ${Math.ceil(detail.remaining_ms/1000)}s remaining`;
+  document.getElementById('runtime-meta').textContent=(detail.name||'#'+detail.job_id.slice(0,8))+' | '+(detail.active?'Active':'Queued preview')+' | '+detail.phase+' | iteration '+((detail.iteration||0)+1)+remaining;
+  const rows=(detail.steps||[]).map((step,index)=>`<tr data-runtime-state="${esc(step.state)}"><td>${index+1}<br><span class="cdim">${esc(step.state)}</span></td><td>${esc((step.params.type||'').toUpperCase())}</td><td><div class="cdim">${Number(step.params.delay_ms||0)}ms delay</div><pre class="runtime-param">${esc(runtimeStepText(step.params))}</pre>${step.result!=null?`<div class="runtime-result">${esc(runtimeResultText(step.result))}</div>`:''}${step.error?`<div class="cerr">${esc(step.error)}</div>`:''}</td></tr>`).join('');
+  const expected=detail.pause?.evt||detail.steps?.[detail.current_step]?.params?.evt||'';
+  const conditions=(detail.conditions||[]).map(condition=>{
+    const snapshot=snapshots.find(item=>item.id===condition.snapshot_id);
+    const score=condition.last_score==null?'-':Number(condition.last_score).toFixed(3);
+    const current=detail.active&&['waiting','paused','resuming'].includes(detail.phase)&&expected==='IMG.MATCH.'+condition.condition_id;
+    return `<div class="runtime-condition">${snapshot?`<img class="snap-thumb" src="data:image/jpeg;base64,${snapshot.thumb_b64}" alt="Condition snapshot">`:''}<strong>${current?(detail.phase==='paused'?'Paused: ':'Waiting: '):''}${esc(condition.name||condition.condition_id)}</strong><br><span class="cdim">${esc(condition.condition_id)}</span><br>${detail.active?(condition.enabled?'ARM':'UNARM'):'Queued / inactive'} | score ${score} / ${condition.threshold??'-'} | hits ${condition.consecutive_hits??0} / ${condition.min_hits??'-'}<br>ROI ${esc(JSON.stringify(condition.roi||[]))}</div>`;
+  }).join('');
+  content.innerHTML=(detail.pause?`<div class="cerr" style="margin-bottom:8px">FIFO paused: ${esc(detail.pause.message||detail.pause.evt)}</div>`:'')+`<table class="runtime-steps"><thead><tr><th style="width:70px">STEP</th><th style="width:48px">TYPE</th><th>PARAMETERS / RESULT</th></tr></thead><tbody>${rows}</tbody></table>`+conditions;
+}
+async function refreshRuntimeDetail(){
+  if(scriptView!=='runtime'||!runtimeSelectedId)return;
+  const jobId=runtimeSelectedId,session=runtimeState.session_id,request=++runtimeDetailRequest;
+  if(runtimeDetailController)runtimeDetailController.abort();
+  const controller=new AbortController();runtimeDetailController=controller;
+  try{
+    const response=await fetch('/script/jobs/'+encodeURIComponent(jobId),{signal:controller.signal});
+    if(request!==runtimeDetailRequest||jobId!==runtimeSelectedId||session!==runtimeState.session_id||scriptView!=='runtime')return;
+    if(response.status===404){document.getElementById('runtime-content').innerHTML='<div class="cdim">Job is no longer active or queued</div>';refreshScriptStatus();return;}
+    if(!response.ok)throw new Error('Runtime detail unavailable');
+    const detail=await response.json();
+    if(request!==runtimeDetailRequest||jobId!==runtimeSelectedId||session!==runtimeState.session_id||detail.session_id!==session||scriptView!=='runtime')return;
+    renderRuntimeDetail(detail);
+  }catch(error){
+    if(error.name!=='AbortError'&&request===runtimeDetailRequest){
+      document.getElementById('runtime-meta').textContent=error.message;
+      document.getElementById('runtime-content').innerHTML='<div class="cerr">'+esc(error.message)+'</div>';
+    }
+  }
+  finally{if(runtimeDetailController===controller)runtimeDetailController=null;}
 }
 
 function normalizeImportedSteps(rawSteps){
   const out=[];
   (rawSteps||[]).forEach(step=>{
     if(step.type==='ocr')step={...step,...validateOcrSettings(step)};
-    if(step.type==='mse'&&step.action==='IMAGE_CLICK')step={...step,image_click:validateImageClickSettings(step.image_click||{})};
+    if(step.type==='mse'&&step.action==='IMAGE_CLICK')throw new Error('IMAGE_CLICK was removed. Use IMAGE_MOVE, then add CLICK or DBLCLICK separately.');
+    if(step.type==='mse'&&step.action==='IMAGE_MOVE')step={...step,image_move:validateImageMoveSettings(step.image_move||{})};
     const evtName=(step.evt||'').trim();
     if(step.type!=='evt'&&evtName){
       out.push({type:'evt',delay_ms:0,evt:evtName});
@@ -889,13 +1114,13 @@ function renderSteps(){
       params=`<select class="ti-s" style="width:72px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>
         <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px;flex-wrap:wrap;max-width:100%">${fields}</span>`;
     } else {
-      const ACTS=['MOVE','MOVE_TO','CLICK','DBLCLICK','SCROLL','IMAGE_CLICK'];
+      const ACTS=['MOVE','MOVE_TO','CLICK','DBLCLICK','SCROLL','IMAGE_MOVE'];
       const asel=ACTS.map(a=>`<option${a===s.action?' selected':''}>${a}</option>`).join('');
       let fields='';
-      if(s.action==='IMAGE_CLICK'){
-        fields=`<button class="btn-t btn-sm" onclick="editImageClickStep(${s._id})" title="Edit image-click template and search settings">Target</button>
-          <img src="data:image/png;base64,${s.image_click?.template_b64||''}" alt="Click template" style="width:44px;height:24px;object-fit:contain">
-          <span style="font-size:10px">${s.image_click?.button||'L'} · ${s.image_click?.threshold??0.92}</span>`;
+      if(s.action==='IMAGE_MOVE'){
+        fields=`<button class="btn-t btn-sm" onclick="editImageMoveStep(${s._id})" title="Edit image-move template and search settings">Target</button>
+          <img src="data:image/png;base64,${s.image_move?.template_b64||''}" alt="Move template" style="width:44px;height:24px;object-fit:contain">
+          <span style="font-size:10px">${s.image_move?.threshold??0.92}</span>`;
       } else if(s.action==='MOVE'||s.action==='MOVE_TO'){
         const lb=s.action==='MOVE_TO'?['x','y']:['dx','dy'];
         fields=`<span style="color:var(--fg3);font-size:9px">${lb[0]}</span><input class="ti" value="${s.x||0}" style="width:30px" oninput="updStep(${s._id},'x',this.value)">
@@ -935,7 +1160,7 @@ function updStepKbd(id,t){
   if(t==='KEY'&&!KBD_SPECIAL_KEYS.includes(s.key))s.key='ENTER';
   renderSteps();
 }
-function updStepMse(id,t){if(t==='IMAGE_CLICK'){editImageClickStep(id);return;}const s=steps.find(x=>x._id===id);if(s){s.action=t;renderSteps();}}
+function updStepMse(id,t){if(t==='IMAGE_MOVE'){editImageMoveStep(id);return;}const s=steps.find(x=>x._id===id);if(s){s.action=t;renderSteps();}}
 
 function collectImgBundle(){
   const conditionIds=[...new Set(
@@ -976,7 +1201,8 @@ function exportJSON(){
     .map(([sid,pin])=>`ATTACH ${sid} ${pin}`);
   const img=collectImgBundle();
   const payload={
-    schema_version:out.some(step=>step.type==='mse'&&step.action==='IMAGE_CLICK')?4:(out.some(step=>step.type==='ocr')?3:(img.bundle.conditions.length?2:1)),
+    schema_version:out.some(step=>step.type==='mse'&&step.action==='IMAGE_MOVE')?5:(out.some(step=>step.type==='ocr')?3:(img.bundle.conditions.length?2:1)),
+    name:document.getElementById('script-name').value.trim()||null,
     loop:document.getElementById('loop-cb').checked,
     servos:attachedMap,
     attach_cmds:attachCmds,
@@ -1004,6 +1230,7 @@ function handleImport(e){
     const hasBundle=d.img_bundle&&Array.isArray(d.img_bundle.conditions)&&Array.isArray(d.img_bundle.snapshots)&&d.img_bundle.conditions.length;
     if(hasBundle){
       const rr=await fetch('/script/import_bundle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        name:d.name||null,
         loop:!!d.loop,
         servos:d.servos||{},
         attach_cmds:d.attach_cmds||[],
@@ -1017,6 +1244,7 @@ function handleImport(e){
       await refreshCondList();
       addLog('srv',`Imported IMG bundle: ${bundleResp.img_import.conditions} cond / ${bundleResp.img_import.snapshots} snapshot(s)`,'cok');
     }
+    document.getElementById('script-name').value=typeof imported.name==='string'?imported.name:'';
     if(typeof imported.loop==='boolean')document.getElementById('loop-cb').checked=imported.loop;
     if(Array.isArray(imported.steps)){
       steps=normalizeImportedSteps(imported.steps).map(s=>({...s,_id:++stepIdCnt}));
@@ -1033,6 +1261,7 @@ async function runScript(){
   const loop=document.getElementById('loop-cb').checked;
   // 全部走後端 /script/run，支援 SRV + KBD + MSE 混合
   const body={
+    name:document.getElementById('script-name').value.trim()||null,
     loop,
     servos:attachedMap,
     steps:steps.map(({_id,...s})=>s)
@@ -1057,7 +1286,13 @@ async function runScript(){
 
 async function stopScript(){
   const r=await fetch('/script/stop',{method:'POST'});
-  if(r.ok) addLog('srv','→ SCRIPT STOP','csnd');
+  if(r.ok){
+    addLog('srv','→ SCRIPT STOP','csnd');setScriptPause(null);kbLocked=false;
+    resetRuntimeView();
+    setFifoQueueData({running:false,queued:0,waiting:null,paused:false,pause:null});
+    ['prog-badge','kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
+    setProgMsg('Stopped');
+  }
   await fetch('/srv/api/stop',{method:'POST'}).catch(()=>{});
 }
 
@@ -1219,32 +1454,39 @@ async function queueNowEvtBucket(evt){
     addLog('srv',`✘ queue-now EVT:${evt} failed`,'cerr');
   }
 }
-function renderEvtPool(){
-  const body=document.getElementById('evt-pool-body');
-  const total=evtPoolState.total||0;
-  document.getElementById('evt-pool-total').textContent=String(total);
-  if(!evtPoolState.buckets||!evtPoolState.buckets.length){
-    body.innerHTML='<div class="evt-head"><span>pending</span><span>0</span></div>';
-    return;
-  }
-  body.innerHTML=evtPoolState.buckets.map(b=>{
-    const first=(b.scripts&&b.scripts[0])?b.scripts[0]:null;
-    const meta=first?`#${first.id} ${first.summary} (${first.age_s}s)`:'';
-    const evtEnc=encodeURIComponent(b.evt);
-    return `<div class="evt-bucket"><div class="evt-row"><span>EVT:${esc(b.evt)}</span><span>${b.count}</span></div><div class="evt-meta">${esc(meta)}</div><div class="evt-acts"><button class="btn-g btn-sm" data-evt="${evtEnc}" onclick="queueNowEvtBucket(decodeURIComponent(this.dataset.evt))">QUEUE NOW</button><button class="btn-b btn-sm" data-evt="${evtEnc}" onclick="loadEvtBucket(decodeURIComponent(this.dataset.evt))">LOAD</button><button class="btn-r btn-sm" data-evt="${evtEnc}" onclick="deleteEvtBucket(decodeURIComponent(this.dataset.evt))">DELETE</button></div></div>`;
-  }).join('');
+function renderFifoQueue(){
+  const body=document.getElementById('fifo-queue-body');
+  const count=document.getElementById('fifo-queue-total');
+  if(!body||!count)return;
+  const waiting=fifoState.paused?(fifoState.pause||fifoState.waiting):fifoState.waiting;
+  const state=fifoState.paused?'Paused':waiting?'Waiting':fifoState.running?'Running':fifoState.queued?'Queued':'Idle';
+  count.textContent=String(fifoState.queued);
+  body.innerHTML=`<div class="evt-head"><span>${state}</span><span>${fifoState.queued} queued</span></div>`+
+    (waiting?.evt?`<div class="fifo-event">EVT: ${esc(waiting.evt)}</div><div class="evt-head">Step ${Number(waiting.step)+1} / ${Number(waiting.total)}</div>`:'');
 }
-function setEvtPoolData(msg){
-  evtPoolState={
-    total:msg.total||0,
-    buckets:Array.isArray(msg.buckets)?msg.buckets:[]
-  };
-  renderEvtPool();
+function setFifoQueueData(data){
+  const queued=Number(data.queued);
+  fifoState={running:!!data.running,queued:Number.isFinite(queued)?Math.max(0,Math.trunc(queued)):0,
+    waiting:data.waiting||null,paused:!!data.paused,pause:data.pause||null};
+  syncPauseControls();
+  renderFifoQueue();
 }
 async function refreshScriptStatus(){
+  const request=++scriptStatusRequest,revision=scriptStatusRevision;
   try{
     const d=await fetch('/script/status').then(r=>r.json());
-    if(d&&d.pending)setEvtPoolData(d.pending);
+    if(request!==scriptStatusRequest||revision!==scriptStatusRevision)return;
+    if(d){
+      if(d.runtime&&setRuntimeSnapshot(d.runtime)===false)return;
+      setFifoQueueData(d);
+      const wasPaused=!!scriptPauseState;
+      setScriptPause(d.paused?d.pause:null);
+      if(d.running===false&&!d.paused){
+        kbLocked=false;
+        ['prog-badge','kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
+        if(wasPaused)setProgMsg('Idle');
+      }
+    }
   }catch(_){ }
 }
 function classifyKbm(line){
@@ -1267,7 +1509,7 @@ function srvWSConnect(){
     else if(msg.type==='attached'){attachedMap=intKeys(msg.attached||{});renderServoList();}
     else if(msg.type==='done'){applySrvStatus({state:'idle'});setProgress(null,null);setProgMsg('✔ done');document.getElementById('prog-badge').style.display='none';}
     else if(msg.type==='error') addLog('srv','ERR '+msg.message,'cerr');
-    else if(msg.type==='script_pool') setEvtPoolData(msg);
+    else if(msg.type==='script_pool') refreshScriptStatus();
     else if(msg.type==='workspace_cleared'){
       applyWorkspaceCleared();
       addLog('srv','Workspace cleared','cok');
@@ -1284,7 +1526,9 @@ function kbmWSConnect(){
   kbmWS=new WebSocket(`ws://${location.host}/ws/kbm`);
   kbmWS.onopen=()=>addLog('kbm','WS connected','cdim');
   kbmWS.onmessage=e=>{try{const msg=JSON.parse(e.data);
-    if(msg.type==='serial'){
+    if(msg.type==='script_runtime'){
+      setRuntimeSnapshot(msg.runtime);
+    } else if(msg.type==='serial'){
       const line=String(msg.line||'');
       addLog('kbm',(line.startsWith('→ ')?'':'← ')+line,classifyKbm(line));
     } else if(msg.type==='event'){
@@ -1293,12 +1537,24 @@ function kbmWSConnect(){
       kbmState=msg.state||'disc';updateKbmLed();
       if(msg.port)syncPortSelect('kbm-port-sel',msg.port);
     } else if(msg.type==='script_wait'){
+      setScriptPause(null);
+      setFifoQueueData({...fifoState,running:true,paused:false,pause:null,waiting:{evt:msg.evt,step:msg.step,total:msg.total}});
       setProgMsg(`⌛ waiting EVT:${msg.evt}`);
       addLog('kbm',`⌛ waiting EVT:${msg.evt}`,'crun');
     } else if(msg.type==='script_event'){
+      setScriptPause(null);
+      setFifoQueueData({...fifoState,running:true,paused:false,pause:null,waiting:null});
       addLog('kbm',`✓ EVT matched ${msg.evt}`,'cevt');
       setProgMsg(`✓ EVT ${msg.evt}`);
+    } else if(msg.type==='script_resumed'){
+      setScriptPause(null);
+      setFifoQueueData({...fifoState,running:true,paused:false,pause:null,
+        waiting:msg.evt?{evt:msg.evt,step:msg.step,total:msg.total}:null});
+      setProgMsg(msg.evt?'Waiting EVT:'+msg.evt:'Resumed');
     } else if(msg.type==='script_start'){
+      setScriptPause(null);
+      setFifoQueueData({...fifoState,running:true,paused:false,pause:null,waiting:null});
+      refreshScriptStatus();
       addLog('kbm',`▶ Script started  ${msg.total} steps  loop=${msg.loop}`,'csnd');
       setProgress(0,msg.total);
       document.getElementById('prog-badge').style.display='';
@@ -1306,12 +1562,17 @@ function kbmWSConnect(){
       document.getElementById('kb-lock-lbl').style.display='';
       document.getElementById('kb-lock-msg').style.display='';
     } else if(msg.type==='script_progress'){
+      setScriptPause(null);
+      setFifoQueueData({...fifoState,running:true,paused:false,pause:null,waiting:null});
       const cur=msg.step+1,tot=msg.total;
       setProgress(cur,tot);
       const typeLabel=msg.step_type.toUpperCase();
       document.getElementById('sc-prog-step').textContent=`[${typeLabel}] ${cur}/${tot}`;
       document.getElementById('prog-msg').textContent=`[${typeLabel}] step ${cur}/${tot}`;
     } else if(msg.type==='script_done'){
+      setScriptPause(null);
+      setFifoQueueData({...fifoState,running:false,paused:false,pause:null,waiting:null});
+      refreshScriptStatus();
       addLog('kbm',`✔ Script done  ×${msg.iterations||1}`,'cok');
       setProgMsg('✔ done');
       document.getElementById('prog-badge').style.display='none';
@@ -1319,25 +1580,34 @@ function kbmWSConnect(){
       document.getElementById('kb-lock-lbl').style.display='none';
       document.getElementById('kb-lock-msg').style.display='none';
     } else if(msg.type==='script_stopped'){
+      setScriptPause(null);
+      setFifoQueueData({running:false,queued:0,paused:false,pause:null,waiting:null});
       addLog('kbm','■ Script stopped','crun');
       setProgMsg('■ stopped');
       document.getElementById('prog-badge').style.display='none';
       kbLocked=false;
       document.getElementById('kb-lock-lbl').style.display='none';
       document.getElementById('kb-lock-msg').style.display='none';
+    } else if(msg.type==='script_paused'){
+      setScriptPause(msg);
+      setFifoQueueData({...fifoState,running:true,paused:true,pause:msg,waiting:{evt:msg.evt,step:msg.step,total:msg.total}});
+      addLog('kbm',`FIFO paused: ${msg.message} - resume or stop`,'cerr');
     } else if(msg.type==='script_error'){
       addLog('kbm','✘ '+msg.message,'cerr');
       if(msg.fatal){
+        setScriptPause(null);
+        setFifoQueueData({...fifoState,running:false,paused:false,pause:null,waiting:null});
+        refreshScriptStatus();
         kbLocked=false;
         ['prog-badge','kb-lock-lbl','kb-lock-msg'].forEach(id=>document.getElementById(id).style.display='none');
         setProgMsg(msg.message||'Script failed');
       }
     } else if(msg.type==='ocr_result'){
       addLog('kbm',`OCR ${msg.variable} = ${msg.value}`,'cok');
-    } else if(msg.type==='image_click_result'){
-      addLog('kbm',`Image click (${msg.match.center.map(value=>Math.round(value)).join(', ')}) score=${msg.match.score}`,'cok');
+    } else if(msg.type==='image_move_result'){
+      addLog('kbm',`Image move (${msg.match.center.map(value=>Math.round(value)).join(', ')}) score=${msg.match.score}`,'cok');
     } else if(msg.type==='script_pool'){
-      setEvtPoolData(msg);
+      refreshScriptStatus();
     } else if(msg.type==='script_pool_released'){
       const src=msg.source==='manual'?'QUEUE NOW':'EVT';
       addLog('srv',`✓ ${src} ${msg.evt} released ${msg.released} script(s)`,'cok');
@@ -1787,7 +2057,7 @@ function renderSnapList(){
       <div class="snap-actions">
         <button class="btn-t btn-sm" onclick="openCondModal('${s.id}')" title="Create condition from this snapshot">CON</button>
         <button class="btn-t btn-sm" onclick="openOcrModal('${s.id}')" title="Select four-digit OCR region">OCR</button>
-        <button class="btn-t btn-sm" onclick="openImageClickModal('${s.id}')" title="Select image-click target">CLK</button>
+        <button class="btn-t btn-sm" onclick="openImageMoveModal('${s.id}')" title="Locate image center and move cursor without clicking">MOV</button>
       </div>
     </div>`).join('');
 }
@@ -1874,7 +2144,7 @@ function setRoiModalMode(mode){
   document.getElementById('vcm-image-template').hidden=true;
   document.getElementById('vcm-ocr-test').hidden=!(ocr||image);
   document.getElementById('vcm-ocr-test').textContent=image?'Test Locate':'Test OCR';
-  document.getElementById('vcm-ocr-test').onclick=image?testImageClick:testOcrRegion;
+  document.getElementById('vcm-ocr-test').onclick=image?testImageMove:testOcrRegion;
   document.getElementById('vcm-ocr-test').disabled=false;
   document.getElementById('vcm-submit-btn').disabled=false;
   document.getElementById('vcm-ocr-result').textContent='';
@@ -1941,30 +2211,29 @@ async function testOcrRegion(){
     if(revision===ocrTestRevision){button.disabled=false;ocrTestController=null;}
   }
 }
-function openImageClickModal(snapId,stepId=null){
+function openImageMoveModal(snapId,stepId=null){
   if(!snapshots.some(snap=>snap.id===snapId))return;
   openCondModal(snapId);setRoiModalMode('image');vcmImageStepId=stepId;
   const step=steps.find(item=>item._id===stepId&&item.type==='mse');
-  const config=step?.image_click?validateImageClickSettings(step.image_click):null;
+  const config=step?.image_move?validateImageMoveSettings(step.image_move):null;
   vcmImageConfig=config;vcmImageDirty=!config;
   document.getElementById('vcm-image-threshold').value=config?.threshold??0.92;
-  document.getElementById('vcm-image-button').value=config?.button??'L';
   document.getElementById('vcm-ocr-timeout').value=config?.timeout_ms??5000;
   document.getElementById('vcm-ocr-stable').value=config?.stable_hits??2;
   (config?.search_roi||[0,0,1,1]).forEach((value,index)=>document.getElementById('vcm-search-'+index).value=value);
-  document.getElementById('vcm-modal-title').textContent='// Image Click Target';
+  document.getElementById('vcm-modal-title').textContent='// Image Move Target';
   document.getElementById('vcm-submit-btn').textContent=step?'Save':'Add Step';
-  document.getElementById('vcm-submit-btn').onclick=saveImageClickSettings;
+  document.getElementById('vcm-submit-btn').onclick=saveImageMoveSettings;
   if(config){
     const thumbnail=document.getElementById('vcm-image-template');
     thumbnail.src='data:image/png;base64,'+config.template_b64;thumbnail.hidden=false;
     document.getElementById('vcm-roi-hint').style.display='none';
   }
 }
-async function editImageClickStep(id){
+async function editImageMoveStep(id){
   if(!snapshots.length)await takeSnapshot();
   if(!snapshots.length){renderSteps();addLog('srv','Take a SNAP to select a click target','cerr');return;}
-  openImageClickModal(snapshots[snapshots.length-1].id,id);
+  openImageMoveModal(snapshots[snapshots.length-1].id,id);
 }
 function setImageActionsBusy(busy){
   document.getElementById('vcm-submit-btn').disabled=busy;
@@ -1981,21 +2250,20 @@ async function imageClickModalSettings(signal){
   const selectionRevision=vcmImageSelectionRevision;
   if(vcmImageDirty||!vcmImageConfig){
     if(!vcmRoi)throw new Error('Select the target region.');
-    const response=await fetch('/visual/image-click/template',{method:'POST',headers:{'Content-Type':'application/json'},
+    const response=await fetch('/visual/image-move/template',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({snapshot_id:vcmSnapId,roi:vcmRoi}),signal});
     const data=await response.json();
     if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Invalid image template');
     if(signal.aborted||selectionRevision!==vcmImageSelectionRevision)throw new DOMException('Cancelled','AbortError');
-    vcmImageConfig=data.image_click;vcmImageDirty=false;
+    vcmImageConfig=data.image_move;vcmImageDirty=false;
   }
-  return validateImageClickSettings({...vcmImageConfig,
+  return validateImageMoveSettings({...vcmImageConfig,
     search_roi:[0,1,2,3].map(index=>Number(document.getElementById('vcm-search-'+index).value)),
     threshold:Number(document.getElementById('vcm-image-threshold').value),
-    button:document.getElementById('vcm-image-button').value,
     timeout_ms:Number(document.getElementById('vcm-ocr-timeout').value),
     stable_hits:Number(document.getElementById('vcm-ocr-stable').value)});
 }
-async function saveImageClickSettings(){
+async function saveImageMoveSettings(){
   if(document.getElementById('vcm-submit-btn').disabled)return;
   const revision=++ocrTestRevision;
   if(ocrTestController)ocrTestController.abort();
@@ -2004,14 +2272,14 @@ async function saveImageClickSettings(){
   try{
     const config=await imageClickModalSettings(ocrTestController.signal);
     if(revision!==ocrTestRevision)return;
-    addImageClickStep(config,vcmImageStepId);closeCondModal();
+    addImageMoveStep(config,vcmImageStepId);closeCondModal();
   }catch(error){
     if(revision===ocrTestRevision&&error.name!=='AbortError')document.getElementById('vcm-ocr-result').textContent=error.message;
   }finally{
     if(revision===ocrTestRevision){setImageActionsBusy(false);ocrTestController=null;}
   }
 }
-async function testImageClick(){
+async function testImageMove(){
   if(document.getElementById('vcm-ocr-test').disabled||document.getElementById('vcm-submit-btn').disabled)return;
   const revision=++ocrTestRevision;
   if(ocrTestController)ocrTestController.abort();
@@ -2021,7 +2289,7 @@ async function testImageClick(){
   document.getElementById('vcm-image-preview').hidden=true;
   try{
     const config=await imageClickModalSettings(ocrTestController.signal);
-    const response=await fetch('/visual/image-click/test',{method:'POST',headers:{'Content-Type':'application/json'},
+    const response=await fetch('/visual/image-move/test',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(config),signal:ocrTestController.signal});
     const data=await response.json();
     if(revision!==ocrTestRevision)return;
@@ -2262,6 +2530,7 @@ kbmWSConnect();
 setInterval(refreshPorts,8000);
 refreshScriptStatus();
 setInterval(refreshScriptStatus,4000);
+setInterval(()=>{if(scriptView==='runtime')refreshScriptStatus();},1000);
 refreshCondList();
 refreshSnapList();
 scanCamDevices();
@@ -2329,7 +2598,6 @@ addLog('kbm','RKS v4 ready','cdim');
         <div class="vcm-row">
           <label class="vcm-lbl" for="vcm-image-threshold">Match Threshold</label>
           <input id="vcm-image-threshold" class="pop-inp" type="number" min="0.5" max="1" step="0.01" value="0.92" style="width:80px">
-          <select id="vcm-image-button" class="ti-s" aria-label="Image click button"><option value="L">Left</option><option value="R">Right</option><option value="M">Middle</option></select>
         </div>
         <div class="vcm-row" style="flex-wrap:wrap">
           <span class="vcm-lbl">Search ROI</span>
