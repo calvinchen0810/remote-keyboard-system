@@ -22,10 +22,28 @@ if errorlevel 1 (
   )
 )
 
+if not exist "%~dp0rks-server.spec" (
+  echo [ERROR] Build spec not found: %~dp0rks-server.spec
+  pause
+  exit /b 1
+)
+
+:choose_work_dir
+set "WORK_DIR=%TEMP%\rks-pyinstaller-%RANDOM%-%RANDOM%"
+if exist "%WORK_DIR%" goto choose_work_dir
+mkdir "%WORK_DIR%"
+if errorlevel 1 (
+  echo [ERROR] Cannot create build work directory: %WORK_DIR%
+  pause
+  exit /b 1
+)
+
 echo [STEP] Building onefile exe...
-"%PYTHON_EXE%" -m PyInstaller --noconfirm --clean --onefile --name rks-server --add-data "static;static" main.py
+echo Work directory: %WORK_DIR%
+"%PYTHON_EXE%" -m PyInstaller --noconfirm --workpath "%WORK_DIR%" --distpath "%~dp0dist" "%~dp0rks-server.spec"
 if errorlevel 1 (
   echo [ERROR] Build failed
+  echo Build diagnostics retained in: %WORK_DIR%
   pause
   exit /b 1
 )

@@ -16,6 +16,16 @@ if "%CAMERA_WIDTH%"=="" set "CAMERA_WIDTH=1280"
 if "%CAMERA_HEIGHT%"=="" set "CAMERA_HEIGHT=720"
 if "%JPEG_QUALITY%"=="" set "JPEG_QUALITY=75"
 
+set "TESSERACT_CMD=%~dp0Tesseract-OCR\tesseract.exe"
+if not exist "%TESSERACT_CMD%" (
+  echo [WARN] Tesseract executable not found: "%TESSERACT_CMD%"
+  echo [WARN] OCR will be unavailable. Other RKS functions can still be used.
+)
+if not exist "%~dp0Tesseract-OCR\tessdata\eng.traineddata" (
+  echo [WARN] English OCR data not found: "%~dp0Tesseract-OCR\tessdata\eng.traineddata"
+  echo [WARN] OCR requires eng.traineddata. Continuing RKS startup.
+)
+
 echo ======================================
 echo RKS Server EXE Startup
 echo HOST=%HOST%
@@ -24,6 +34,7 @@ echo AUTO_CONNECT_SERIAL=%AUTO_CONNECT_SERIAL%
 echo CAMERA_INDEX=%CAMERA_INDEX%
 echo CAMERA_WIDTH=%CAMERA_WIDTH%  CAMERA_HEIGHT=%CAMERA_HEIGHT%
 echo JPEG_QUALITY=%JPEG_QUALITY%
+echo TESSERACT_CMD="%TESSERACT_CMD%"
 echo ======================================
 echo.
 
