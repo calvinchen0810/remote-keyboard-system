@@ -75,7 +75,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 #drag-handle::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:1px;height:40px;background:var(--br);border-radius:1px}
 #script-col{flex:2 1 0;display:flex;flex-direction:column;overflow:hidden;min-width:240px}
 #right-col{width:220px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}
-#visual-col{width:178px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow-y:auto;overflow-x:hidden}
+#visual-col{width:178px;flex-shrink:0;display:grid;grid-template-rows:repeat(2,minmax(0,1fr));gap:6px;min-height:0;overflow:hidden}
 
 /* left */
 .srv-list{overflow:hidden}
@@ -259,8 +259,8 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
 .pop-row input[type=range]{flex:1}
 .pop-num{width:72px;text-align:center;padding:3px 5px;font-size:11px}
 /* snap pool + conditions */
-#snap-list{overflow-y:auto}
-#cond-list{overflow-y:auto;flex:1}
+#snap-pn,#cond-pn{min-height:0}
+#snap-list,#cond-list{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
 .snap-item{display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:4px 6px;border-bottom:1px solid var(--bd)}
 .snap-item:last-child{border-bottom:none}
 .snap-meta{display:flex;align-items:center;gap:3px;min-width:0}
@@ -447,18 +447,18 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
 <!-- VISUAL COL -->
 <div id="visual-col">
 
-  <div class="pn" id="snap-pn" style="flex-shrink:0">
+  <div class="pn" id="snap-pn">
     <div class="ph">Snap Pool
       <button class="btn-t btn-sm" style="margin-left:auto" onclick="takeSnapshot()">📸 SNAP</button>
     </div>
     <div id="snap-list"><div style="font-family:var(--mono);font-size:9px;color:var(--fg3);padding:6px 8px">No snapshots</div></div>
   </div>
 
-  <div class="pn" id="cond-pn" style="flex:1;min-height:0">
+  <div class="pn" id="cond-pn">
     <div class="ph">Conditions
       <span id="cond-count" style="font-size:9px;color:var(--fg3);margin-left:4px">0</span>
     </div>
-    <div id="cond-list" style="flex:1;overflow-y:auto"><div style="font-family:var(--mono);font-size:9px;color:var(--fg3);padding:6px 8px">No conditions</div></div>
+    <div id="cond-list"><div style="font-family:var(--mono);font-size:9px;color:var(--fg3);padding:6px 8px">No conditions</div></div>
   </div>
 
 </div>
