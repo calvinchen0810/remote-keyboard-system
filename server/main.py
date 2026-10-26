@@ -1772,6 +1772,7 @@ async def _submit_script(payload: dict):
 
     queued = await _activate_script(req)
     await _notify_pool_snapshot()
+    await kbm_ws.broadcast({"type": "script_submitted", "job_id": req.job_id})
 
     return {
         "ok":    True,

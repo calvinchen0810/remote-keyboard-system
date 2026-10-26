@@ -1064,6 +1064,13 @@ function setScriptView(view){
   if(view==='runtime'){renderRuntimeJobs();refreshScriptStatus();refreshRuntimeDetail();}
   else{runtimeDetailRequest++;if(runtimeDetailController)runtimeDetailController.abort();}
 }
+function focusRuntimeAfterSubmission(){
+  if(scriptView==='runtime'&&runtimeFollow)return;
+  runtimeFollow=true;
+  const jobs=runtimeJobs();
+  runtimeSelectedId=runtimeState.active?.job_id||jobs[0]?.job_id||null;
+  setScriptView('runtime');
+}
 function setRuntimeSnapshot(snapshot){
   if(!snapshot||!Array.isArray(snapshot.queued)||typeof snapshot.revision!=='number')return false;
   if(runtimeRetiredSessions.has(snapshot.session_id))return false;
@@ -1462,6 +1469,7 @@ async function runScript(){
     if(d.pending){
       addLog('srv',`→ SCRIPT PENDING EVT:${d.gate_evt}  steps=${steps.length}`,'crun');
     } else {
+      focusRuntimeAfterSubmission();
       addLog('srv',`→ SCRIPT ENQUEUED  ${steps.length} steps  loop=${loop}  queued=${d.queued||0}`,'csnd');
       setProgress(0,steps.length);
     }
@@ -1713,6 +1721,8 @@ function kbmWSConnect(){
   kbmWS.onmessage=e=>{try{const msg=JSON.parse(e.data);
     if(msg.type==='script_runtime'){
       setRuntimeSnapshot(msg.runtime);
+    } else if(msg.type==='script_submitted'){
+      focusRuntimeAfterSubmission();
     } else if(msg.type==='serial'){
       const line=String(msg.line||'');
       addLog('kbm',(line.startsWith('→ ')?'':'← ')+line,classifyKbm(line));
