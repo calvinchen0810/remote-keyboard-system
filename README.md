@@ -66,6 +66,34 @@ Nano_SRV USB -> Computer 2
 
 ---
 
+## Build Arduino Firmware
+
+Build each sketch separately in Arduino IDE. The `.ino` file must remain in a folder with the same name:
+
+| Sketch | Board package and board selection | Libraries |
+| --- | --- | --- |
+| `arduino/nano_keyboard/nano_keyboard.ino` | **Arduino AVR Boards** -> **Arduino Nano**; choose the processor/bootloader option matching the Nano | `SoftwareSerial` is included with the AVR platform; no extra library |
+| `arduino/nano_servo/nano_servo.ino` | **Arduino AVR Boards** -> **Arduino Nano**; choose the processor/bootloader option matching the Nano | **Servo** from Arduino Library Manager |
+| `arduino/pro_micro/pro_micro.ino` | **SparkFun AVR Boards** -> **Pro Micro**; select 5V/16MHz or 3.3V/8MHz to match the physical board | **HID-Project 2.8.4** by NicoHood; `Keyboard` and `Mouse` come with the AVR board platform |
+
+### Install Board Packages and Libraries
+
+1. In Arduino IDE, open **Preferences** and add this URL to **Additional Boards Manager URLs**:
+
+  ```text
+  https://raw.githubusercontent.com/sparkfun/Arduino_Boards/main/IDE_Board_Manager/package_sparkfun_index.json
+  ```
+
+2. In **Boards Manager**, install **Arduino AVR Boards** and **SparkFun AVR Boards**.
+3. In **Library Manager**, install **Servo** and **HID-Project**. For this firmware, use HID-Project **2.8.4** or the project-tested version.
+4. Open each sketch from its matching folder, select the board options from the table, then choose **Verify** to compile or **Upload** to flash it.
+
+The Pro Micro sketch requires an ATmega32U4 target. Do not select Arduino Nano/Uno for it; those boards do not provide `Serial1` or the USB HID keyboard/mouse interfaces used by the sketch. The selected voltage/clock must also match the physical Pro Micro.
+
+After flashing, use the baud rate listed above for each USB serial connection. Close Arduino Serial Monitor before starting the RKS server if it is using the same COM port.
+
+---
+
 ## Project Structure
 
 ```text
