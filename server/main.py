@@ -1693,9 +1693,12 @@ async def script_run(request: Request):
         if "command" in payload:
             return await _clear_workspace(payload)
         try:
-            return await _submit_script(payload)
+            result = await _submit_script(payload)
         except ValidationError as exc:
             raise HTTPException(422, json.loads(exc.json(include_url=False))) from exc
+        if request.headers.get("x-rks-source") != "script-editor":
+            await kbm_ws.broadcast({"type": "script_submitted", "job_id": result["job_id"]})
+        return result
 
 
 async def _clear_workspace(payload: dict):
@@ -1772,7 +1775,6 @@ async def _submit_script(payload: dict):
 
     queued = await _activate_script(req)
     await _notify_pool_snapshot()
-    await kbm_ws.broadcast({"type": "script_submitted", "job_id": req.job_id})
 
     return {
         "ok":    True,

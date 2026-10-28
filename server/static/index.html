@@ -1190,13 +1190,22 @@ function runtimeResultText(result){
   if(result?.center&&result?.hid)return 'Center ('+result.center.join(', ')+')\nHID ('+result.hid.join(', ')+') | score '+result.score;
   return JSON.stringify(result);
 }
+function formatElapsed(startedAt,nowSeconds=Date.now()/1000){
+  if(!Number.isFinite(startedAt))return null;
+  const elapsed=Math.max(0,Math.floor(nowSeconds-startedAt));
+  const hours=String(Math.floor(elapsed/3600)).padStart(2,'0');
+  const minutes=String(Math.floor((elapsed%3600)/60)).padStart(2,'0');
+  const seconds=String(elapsed%60).padStart(2,'0');
+  return `${hours}:${minutes}:${seconds}`;
+}
 function renderRuntimeDetail(detail){
   if(!detail||detail.job_id!==runtimeSelectedId)return;
   const content=document.getElementById('runtime-content');
   if(!content)return;
   runtimeDetailJobId=detail.job_id;
   const remaining=detail.phase==='waiting'?' | no timeout':detail.remaining_ms==null?'':` | ${Math.ceil(detail.remaining_ms/1000)}s remaining`;
-  document.getElementById('runtime-meta').textContent=(detail.name||'#'+detail.job_id.slice(0,8))+' | '+(detail.active?'Active':'Queued preview')+' | '+detail.phase+' | iteration '+((detail.iteration||0)+1)+remaining;
+  const elapsed=detail.active&&Number.isFinite(detail.started_at)?` | elapsed ${formatElapsed(detail.started_at)}`:'';
+  document.getElementById('runtime-meta').textContent=(detail.name||'#'+detail.job_id.slice(0,8))+' | '+(detail.active?'Active':'Queued preview')+' | '+detail.phase+' | iteration '+((detail.iteration||0)+1)+remaining+elapsed;
   const items=detail.steps||[];
   const currentIndex=detail.active?(Number.isInteger(detail.current_step)?detail.current_step:items.findIndex(item=>item.state==='active')):-1;
   const expected=detail.pause?.evt||items[currentIndex]?.params?.evt||'';
@@ -1462,14 +1471,13 @@ async function runScript(){
     steps:steps.map(({_id,...s})=>s)
   };
   const r=await fetch('/script/run',{method:'POST',
-    headers:{'Content-Type':'application/json'},
+    headers:{'Content-Type':'application/json','X-RKS-Source':'script-editor'},
     body:JSON.stringify(body)});
   const d=await r.json().catch(()=>({}));
   if(r.ok){
     if(d.pending){
       addLog('srv',`→ SCRIPT PENDING EVT:${d.gate_evt}  steps=${steps.length}`,'crun');
     } else {
-      focusRuntimeAfterSubmission();
       addLog('srv',`→ SCRIPT ENQUEUED  ${steps.length} steps  loop=${loop}  queued=${d.queued||0}`,'csnd');
       setProgress(0,steps.length);
     }
