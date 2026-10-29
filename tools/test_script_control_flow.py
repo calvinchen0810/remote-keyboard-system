@@ -118,6 +118,27 @@ class ScriptControlFlowValidationTests(unittest.TestCase):
         self.assertIsNone(block.then_steps[1].evt)
         self.assertEqual(block.else_steps[0].evt, "READY")
 
+    def test_normalization_rejects_more_than_200_aggregate_actions(self):
+        request = main.MixedScriptRequest.model_validate({
+            "steps": [{"type": "kbd", "evt": "READY"}] * 100 + [
+                {"type": "if_else", "condition_id": "door",
+                 "then_steps": [{"type": "kbd", "evt": "READY"}],
+                 "else_steps": []},
+            ]
+        })
+
+        with self.assertRaisesRegex(ValueError, "at most 200 action steps"):
+            main._normalize_script_request(request)
+
+    def test_normalization_accepts_exactly_200_aggregate_actions(self):
+        request = main.MixedScriptRequest.model_validate({
+            "steps": [{"type": "kbd", "evt": "READY"}] * 100
+        })
+
+        normalized = main._normalize_script_request(request)
+
+        self.assertEqual(len(list(main._iter_action_steps(normalized.steps))), 200)
+
 
 if __name__ == "__main__":
     unittest.main()

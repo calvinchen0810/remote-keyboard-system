@@ -1393,6 +1393,7 @@ def _normalize_script_request(req: MixedScriptRequest) -> MixedScriptRequest:
             normalized_steps.append(node.model_copy(update={
                 "steps": [action for step in node.steps for action in normalize_action(step)],
             }))
+    _validate_control_steps(normalized_steps)
     return req.model_copy(update={"steps": normalized_steps})
 
 
