@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
+import main
 from script_runtime import ScriptRuntime
 
 
@@ -65,6 +66,26 @@ class ScriptRuntimeTests(unittest.TestCase):
         runtime.clear()
         self.assertIsNone(runtime.detail(second))
         self.assertEqual(runtime.snapshot()["queued"], [])
+
+    def test_gate_consumption_skips_control_nodes_and_preserves_their_children(self):
+        request = main.MixedScriptRequest.model_validate({
+            "steps": [
+                {"type": "evt", "evt": "READY"},
+                {"type": "if_else", "condition_id": "door",
+                 "then_steps": [{"type": "evt", "evt": "READY"}],
+                 "else_steps": [{"type": "kbd"}]},
+            ]
+        })
+
+        self.assertEqual(main.PendingScriptPool._gate_evt(request), "READY")
+        consumed = main.PendingScriptPool._consume_gate_step(request, "READY")
+        self.assertEqual([step.type for step in consumed.steps], ["if_else"])
+        self.assertEqual(consumed.steps[0].then_steps[0].evt, "READY")
+        self.assertEqual(main.PendingScriptPool._gate_evt(consumed), None)
+
+        restored = main.PendingScriptPool._restore_gate_step(consumed, "READY")
+        self.assertEqual([step.type for step in restored.steps], ["evt", "if_else"])
+        self.assertEqual(restored.steps[1].then_steps[0].evt, "READY")
 
 
 if __name__ == "__main__":

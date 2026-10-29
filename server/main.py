@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from collections import deque
-from typing import Optional, Any, Callable
+from typing import Optional, Any, Callable, Annotated, Iterator, Literal, Sequence, Union
 
 import base64
 import dataclasses
@@ -553,7 +553,7 @@ class PendingScriptPool:
     @staticmethod
     def _gate_evt(req: "MixedScriptRequest") -> Optional[str]:
         for step in req.steps:
-            if step.type == "evt":
+            if isinstance(step, MixedStep) and step.type == "evt":
                 evt = (step.evt or "").strip()
                 if evt:
                     return evt
@@ -572,11 +572,11 @@ class PendingScriptPool:
 
     @staticmethod
     def _consume_gate_step(req: "MixedScriptRequest", gate_evt: str) -> "MixedScriptRequest":
-        new_steps: list[MixedStep] = []
+        new_steps: list[ScriptNode] = []
         consumed = False
         for step in req.steps:
-            cur_evt = (step.evt or "").strip()
-            if not consumed and step.type == "evt" and cur_evt == gate_evt:
+            cur_evt = (step.evt or "").strip() if isinstance(step, MixedStep) else ""
+            if not consumed and isinstance(step, MixedStep) and step.type == "evt" and cur_evt == gate_evt:
                 consumed = True
                 continue
             new_steps.append(step)
@@ -1175,7 +1175,7 @@ class ConnectRequest(BaseModel):
 
 # ── 混合腳本步驟 ──────────────────────────────────────────────
 class MixedStep(BaseModel):
-    type:        str              = Field(..., pattern="^(srv|kbd|mse|evt|ocr)$")
+    type:        Literal["srv", "kbd", "mse", "evt", "ocr"]
     delay_ms:    int              = Field(0,   ge=0)
     evt:         Optional[str]    = None   # EVT step name; legacy non-EVT steps are normalized on input
     # SRV
@@ -1215,15 +1215,82 @@ class MixedStep(BaseModel):
                 raise ValueError("IMAGE_MOVE requires image_move settings and cannot use a raw cmd")
         return self
 
+
+class IfElseBlock(BaseModel):
+    type: Literal["if_else"]
+    condition_id: str = Field(..., min_length=1)
+    then_steps: list[MixedStep]
+    else_steps: list[MixedStep]
+
+
+class DoWhileBlock(BaseModel):
+    type: Literal["do_while"]
+    condition_id: str = Field(..., min_length=1)
+    repeat_when: Literal["match", "not_match"]
+    max_iterations: int = Field(default=10, ge=1, le=10_000, strict=True)
+    steps: list[MixedStep]
+
+
+ScriptNode = Annotated[
+    Union[IfElseBlock, DoWhileBlock, MixedStep],
+    Field(discriminator="type"),
+]
+
+
+def _iter_action_steps(steps: Sequence[ScriptNode]) -> Iterator[MixedStep]:
+    for node in steps:
+        if isinstance(node, MixedStep):
+            yield node
+        elif isinstance(node, IfElseBlock):
+            yield from node.then_steps
+            yield from node.else_steps
+        else:
+            yield from node.steps
+
+
+def _validate_control_steps(steps: Sequence[ScriptNode]) -> None:
+    if sum(1 for _ in _iter_action_steps(steps)) > 200:
+        raise ValueError("A script may contain at most 200 action steps")
+    for node in steps:
+        if isinstance(node, IfElseBlock) and not (node.then_steps or node.else_steps):
+            raise ValueError("An IF block must have at least one populated branch")
+        if isinstance(node, DoWhileBlock) and not node.steps:
+            raise ValueError("A do-while block must have a non-empty body")
+
+
+def _collect_condition_ids(steps: Sequence[ScriptNode]) -> list[str]:
+    condition_ids: list[str] = []
+    for node in steps:
+        if isinstance(node, IfElseBlock):
+            condition_ids.append(node.condition_id)
+            node_steps = [*node.then_steps, *node.else_steps]
+        elif isinstance(node, DoWhileBlock):
+            condition_ids.append(node.condition_id)
+            node_steps = node.steps
+        else:
+            node_steps = [node]
+        for step in node_steps:
+            evt = (step.evt or "").strip()
+            if step.type == "evt" and evt.startswith("IMG.MATCH."):
+                condition_ids.append(evt[len("IMG.MATCH."):])
+    return condition_ids
+
+
 class MixedScriptRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=80)
     job_id: Optional[str] = Field(default=None, exclude=True)
-    steps:       list[MixedStep] = Field(default_factory=list, max_length=200)
+    steps:       list[ScriptNode] = Field(default_factory=list)
     loop:        bool            = False
     condition_ids: list[str] = Field(default_factory=list, exclude=True)
     # auto-attach: 執行前自動 attach 需要的 servo
     servos:      dict[str, int]  = Field(default_factory=dict)
     attach_cmds: list[str]       = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_control_steps(self):
+        _validate_control_steps(self.steps)
+        return self
+
 
 class ScriptBundleSnapshot(BaseModel):
     snapshot_id: str
@@ -1250,8 +1317,13 @@ class ScriptBundleImportRequest(BaseModel):
     loop: bool = False
     servos: dict[str, int] = Field(default_factory=dict)
     attach_cmds: list[str] = Field(default_factory=list)
-    steps: list[MixedStep] = Field(default_factory=list, max_length=200)
+    steps: list[ScriptNode] = Field(default_factory=list)
     img_bundle: ScriptImgBundle
+
+    @model_validator(mode="after")
+    def validate_control_steps(self):
+        _validate_control_steps(self.steps)
+        return self
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1295,15 +1367,32 @@ def _resolve_mse_cmd(step: MixedStep) -> str:
 
 def _normalize_script_request(req: MixedScriptRequest) -> MixedScriptRequest:
     """Convert legacy per-step evt gates into standalone EVT steps."""
-    normalized_steps: list[MixedStep] = []
-    for step in req.steps:
+    def normalize_action(step: MixedStep) -> list[MixedStep]:
         evt_name = EventBus._normalize(step.evt or "")
         if step.type != "evt" and evt_name:
-            normalized_steps.append(MixedStep(type="evt", delay_ms=0, evt=evt_name))
+            normalized = [MixedStep(type="evt", delay_ms=0, evt=evt_name)]
             step = step.model_copy(update={"evt": None})
         elif step.type == "evt":
             step = step.model_copy(update={"evt": evt_name})
-        normalized_steps.append(step)
+            normalized = []
+        else:
+            normalized = []
+        normalized.append(step)
+        return normalized
+
+    normalized_steps: list[ScriptNode] = []
+    for node in req.steps:
+        if isinstance(node, MixedStep):
+            normalized_steps.extend(normalize_action(node))
+        elif isinstance(node, IfElseBlock):
+            normalized_steps.append(node.model_copy(update={
+                "then_steps": [action for step in node.then_steps for action in normalize_action(step)],
+                "else_steps": [action for step in node.else_steps for action in normalize_action(step)],
+            }))
+        else:
+            normalized_steps.append(node.model_copy(update={
+                "steps": [action for step in node.steps for action in normalize_action(step)],
+            }))
     return req.model_copy(update={"steps": normalized_steps})
 
 
@@ -1761,13 +1850,13 @@ async def _submit_script(payload: dict):
 
     if not req.steps:
         raise HTTPException(400, "steps 不能為空")
-    if any(step.type == "evt" and not (step.evt or "").strip() for step in req.steps):
+    action_steps = list(_iter_action_steps(req.steps))
+    if any(step.type == "evt" and not (step.evt or "").strip() for step in action_steps):
         raise HTTPException(400, "EVT step 需要 evt 名稱")
 
     req.condition_ids = list(dict.fromkeys([
         *img_import_summary["condition_map"].values(),
-        *(step.evt.strip()[len("IMG.MATCH."):] for step in req.steps
-          if step.type == "evt" and (step.evt or "").strip().startswith("IMG.MATCH.")),
+        *_collect_condition_ids(req.steps),
     ]))
 
     if (_script_runner_task is None or _script_runner_task.done()) and _script_queue.empty():
@@ -2446,4 +2535,3 @@ if __name__ == "__main__":
         logger.warning(f"Port {PORT} is already in use. Fallback to port {bind_port}.")
     _log_access_urls(HOST, bind_port)
     uvicorn.run(app, host=HOST, port=bind_port, reload=False, log_level="info")
-
