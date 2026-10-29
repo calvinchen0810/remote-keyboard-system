@@ -1410,7 +1410,7 @@ function normalizeImportedSteps(rawSteps){
   (rawSteps||[]).forEach(step=>{
     if(step.type==='if_else'||step.type==='do_while'){
       const slots=step.type==='if_else'?['then_steps','else_steps']:['steps'];
-      const normalized={...step};
+      const normalized={...step,_id:++stepIdCnt};
       if(step.type==='do_while'){
         normalized.repeat_when=step.repeat_when??'match';
         normalized.max_iterations=step.max_iterations??10;
@@ -1429,11 +1429,11 @@ function normalizeImportedSteps(rawSteps){
     if(step.type==='mse'&&step.action==='IMAGE_MOVE')step={...step,image_move:validateImageMoveSettings(step.image_move||{})};
     const evtName=(step.evt||'').trim();
     if(step.type!=='evt'&&evtName){
-      out.push({type:'evt',delay_ms:0,evt:evtName});
+      out.push({type:'evt',_id:++stepIdCnt,delay_ms:0,evt:evtName});
       const {evt,...rest}=step;
-      out.push(rest);
+      out.push({...rest,_id:++stepIdCnt});
     } else {
-      out.push(step);
+      out.push({...step,_id:++stepIdCnt});
     }
   });
   return out;
@@ -1638,12 +1638,28 @@ function updStepKbd(id,t){
 function updStepMse(id,t){const s=findStepLocation(id)?.step;if(!s||s.type!=='mse')return reportEditorError('Mouse step no longer exists.');if(t==='IMAGE_MOVE'){editImageMoveStep(id);return;}s.action=t;renderSteps();}
 
 function collectImgBundle(){
-  const conditionIds=[...new Set(
-    steps
-      .map(s=>(s.evt||'').trim())
-      .filter(evt=>evt.startsWith('IMG.MATCH.'))
-      .map(evt=>evt.slice('IMG.MATCH.'.length))
-  )];
+  const conditionIds=[];
+  const seenConditions=new Set();
+  const addCondition=cid=>{
+    if(cid&&!seenConditions.has(cid)){seenConditions.add(cid);conditionIds.push(cid);}
+  };
+  const visit=nodes=>{
+    for(const node of nodes||[]){
+      if(node.type==='if_else'){
+        addCondition(node.condition_id);
+        visit(node.then_steps);
+        visit(node.else_steps);
+      } else if(node.type==='do_while'){
+        addCondition(node.condition_id);
+        visit(node.steps);
+      } else {
+        const evt=(node.evt||'').trim();
+        const normalizedEvt=evt.toUpperCase().startsWith('EVT:')?evt.slice(4).trim():evt;
+        if(node.type==='evt'&&normalizedEvt.startsWith('IMG.MATCH.'))addCondition(normalizedEvt.slice('IMG.MATCH.'.length));
+      }
+    }
+  };
+  visit(steps);
   const bundle={conditions:[],snapshots:[]};
   const missing=[];
   const seenSnapshots=new Set();
@@ -1670,13 +1686,14 @@ function collectImgBundle(){
 }
 
 function exportJSON(){
-  const out=steps.map(({_id,...s})=>s);
+  const out=serializeEditorSteps(steps);
   const attachCmds=Object.entries(attachedMap)
     .sort((a,b)=>parseInt(a[0])-parseInt(b[0]))
     .map(([sid,pin])=>`ATTACH ${sid} ${pin}`);
   const img=collectImgBundle();
+  const hasControlFlow=out.some(step=>step.type==='if_else'||step.type==='do_while');
   const payload={
-    schema_version:out.some(step=>step.type==='mse'&&step.action==='IMAGE_MOVE')?5:(out.some(step=>step.type==='ocr')?3:(img.bundle.conditions.length?2:1)),
+    schema_version:hasControlFlow?6:(out.some(step=>step.type==='mse'&&step.action==='IMAGE_MOVE')?5:(out.some(step=>step.type==='ocr')?3:(img.bundle.conditions.length?2:1))),
     name:document.getElementById('script-name').value.trim()||null,
     loop:document.getElementById('loop-cb').checked,
     servos:attachedMap,
@@ -1722,7 +1739,7 @@ function handleImport(e){
     document.getElementById('script-name').value=typeof imported.name==='string'?imported.name:'';
     if(typeof imported.loop==='boolean')document.getElementById('loop-cb').checked=imported.loop;
     if(Array.isArray(imported.steps)){
-      steps=assignEditorStepIds(normalizeImportedSteps(imported.steps));
+      steps=normalizeImportedSteps(imported.steps);
       renderSteps();
       addLog('srv','Imported '+steps.length+' steps','cok');
     }

@@ -4,7 +4,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -311,16 +311,17 @@ class ScriptControlFlowValidationTests(unittest.TestCase):
             "steps": [
                 {"type": "if_else", "condition_id": "door",
                  "then_steps": [{"type": "evt", "evt": "IMG.MATCH.then"},
-                                {"type": "kbd"}],
+                                {"type": "kbd"},
+                                {"type": "evt", "evt": "IMG.MATCH.door"}],
                  "else_steps": [{"type": "evt", "evt": "READY"}]},
                 {"type": "do_while", "condition_id": "loop",
                  "repeat_when": "match", "steps": [{"type": "evt", "evt": "IMG.MATCH.body"}]},
-                {"type": "evt", "evt": "IMG.MATCH.top"},
+                {"type": "evt", "evt": "EVT: IMG.MATCH.top"},
             ]
         })
 
         actions = list(main._iter_action_steps(request.steps))
-        self.assertEqual([step.type for step in actions], ["evt", "kbd", "evt", "evt", "evt"])
+        self.assertEqual([step.type for step in actions], ["evt", "kbd", "evt", "evt", "evt", "evt"])
         self.assertEqual(main._collect_condition_ids(request.steps),
                          ["door", "then", "loop", "body", "top"])
 
@@ -376,6 +377,11 @@ class ScriptControlFlowSubmissionTests(unittest.IsolatedAsyncioTestCase):
             (main, "_script_queue", asyncio.Queue()),
             (main, "_script_runner_task", None),
             (main.event_bus, "clear", AsyncMock()),
+            (main.condition_manager, "get", Mock(return_value=main.MatchCondition(
+                condition_id="door", name="Door", snapshot_id="live-snapshot",
+                roi=[0, 0, 1, 1],
+            ))),
+            (main.snapshot_pool, "get", Mock(return_value={"jpeg_b64": "live"})),
         ]:
             patcher = patch.object(owner, attribute, replacement)
             patcher.start()
@@ -424,6 +430,117 @@ class ScriptControlFlowSubmissionTests(unittest.IsolatedAsyncioTestCase):
                 self.activate.assert_awaited_once()
                 request = self.activate.await_args.args[0]
                 self.assertEqual(len(list(main._iter_action_steps(request.steps))), 200)
+
+    async def test_submit_collects_and_activates_distinct_control_and_image_conditions(self):
+        condition = main.MatchCondition(
+            condition_id="door", name="Door", snapshot_id="live-snapshot",
+            roi=[0, 0, 1, 1],
+        )
+        with patch.object(main.condition_manager, "get", return_value=condition), \
+             patch.object(main.snapshot_pool, "get", return_value={"jpeg_b64": "live"}):
+            await self.post({"steps": [
+                {"type": "if_else", "condition_id": "door",
+                 "then_steps": [{"type": "evt", "evt": "IMG.MATCH.door"}],
+                 "else_steps": []},
+            ]})
+
+        request = self.activate.await_args.args[0]
+        self.assertEqual(request.condition_ids, ["door"])
+
+    async def test_submit_rejects_missing_or_unusable_condition_before_enqueue(self):
+        request = {"steps": [{
+            "type": "if_else", "condition_id": "missing",
+            "then_steps": [{"type": "kbd"}], "else_steps": [],
+        }]}
+        with patch.object(main.condition_manager, "get", return_value=None):
+            with self.assertRaises(HTTPException) as raised:
+                await self.post(request)
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("Condition missing", str(raised.exception.detail))
+        self.activate.assert_not_awaited()
+
+        condition = main.MatchCondition(
+            condition_id="door", name="Door", snapshot_id="deleted",
+            roi=[0, 0, 1, 1],
+        )
+        request["steps"][0]["condition_id"] = "door"
+        with patch.object(main.condition_manager, "get", return_value=condition), \
+             patch.object(main.snapshot_pool, "get", return_value=None):
+            with self.assertRaises(HTTPException) as raised:
+                await self.post(request)
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("Snapshot", str(raised.exception.detail))
+        self.activate.assert_not_awaited()
+
+
+class ScriptBundleImportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_import_remaps_block_conditions_and_nested_image_events(self):
+        request = main.ScriptBundleImportRequest.model_validate({
+            "steps": [
+                {"type": "if_else", "condition_id": "old-door",
+                 "then_steps": [{"type": "kbd"}],
+                 "else_steps": [{"type": "evt", "evt": "IMG.MATCH.old-image"},
+                                {"type": "evt", "evt": "READY"}]},
+                {"type": "do_while", "condition_id": "old-image",
+                 "repeat_when": "match", "steps": [{"type": "evt", "evt": "IMG.MATCH.old-door"}]},
+            ],
+            "img_bundle": {
+                "snapshots": [{"snapshot_id": "old-snapshot", "jpeg_b64": "c25hcA=="}],
+                "conditions": [
+                    {"condition_id": "old-door", "name": "Door", "snapshot_id": "old-snapshot",
+                     "roi": [0, 0, 1, 1]},
+                    {"condition_id": "old-image", "name": "Image", "snapshot_id": "old-snapshot",
+                     "roi": [0, 0, 1, 1]},
+                ],
+            },
+        })
+        camera = Mock()
+        camera.isOpened.return_value = True
+        mapped = iter(["new-door", "new-image"])
+        with patch.object(main, "camera", camera), \
+             patch.object(main.snapshot_pool, "add_b64", return_value={"id": "new-snapshot"}), \
+             patch.object(main.condition_manager, "add", side_effect=lambda **kwargs: next(mapped)), \
+             patch.object(main.srv_ws, "broadcast", new_callable=AsyncMock):
+            result = await main._import_script_bundle(request)
+
+        self.assertEqual(result["steps"][0]["condition_id"], "new-door")
+        self.assertEqual(result["steps"][0]["else_steps"][0]["evt"], "IMG.MATCH.new-image")
+        self.assertEqual(result["steps"][0]["else_steps"][1]["evt"], "READY")
+        self.assertEqual(result["steps"][1]["condition_id"], "new-image")
+        self.assertEqual(result["steps"][1]["steps"][0]["evt"], "IMG.MATCH.new-door")
+
+    async def test_import_rejects_references_absent_from_bundle(self):
+        request = main.ScriptBundleImportRequest.model_validate({
+            "steps": [{"type": "do_while", "condition_id": "missing",
+                       "repeat_when": "match", "steps": [{"type": "kbd"}]}],
+            "img_bundle": {"conditions": [], "snapshots": []},
+        })
+        with self.assertRaises(HTTPException) as raised:
+            await main._import_script_bundle(request)
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("missing", str(raised.exception.detail))
+
+    async def test_auto_attach_finds_servos_inside_all_block_slots(self):
+        request = main.MixedScriptRequest.model_validate({
+            "servos": {"2": 18, "3": 19, "4": 20},
+            "steps": [
+                {"type": "if_else", "condition_id": "door",
+                 "then_steps": [{"type": "srv", "servo_id": 2}],
+                 "else_steps": [{"type": "srv", "servo_id": 4}]},
+                {"type": "do_while", "condition_id": "door",
+                 "repeat_when": "match", "steps": [{"type": "srv", "servo_id": 3}]},
+            ],
+        })
+        loop = Mock()
+        loop.run_in_executor = AsyncMock(return_value=True)
+        with patch.object(type(main.srv_serial), "is_connected",
+                          new_callable=PropertyMock, return_value=True), \
+             patch.object(main.srv_serial, "attached", {}), \
+             patch("asyncio.get_event_loop", return_value=loop), \
+             patch.object(main, "_await_script_resume", new_callable=AsyncMock):
+            await main._auto_attach_servos(request)
+
+        self.assertEqual(loop.run_in_executor.await_count, 3)
 
 
 class MixedScriptExecutionTests(unittest.IsolatedAsyncioTestCase):

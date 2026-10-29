@@ -763,7 +763,8 @@ async def _auto_attach_servos(req: "MixedScriptRequest"):
     if not srv_serial.is_connected:
         return
     loop_ = asyncio.get_event_loop()
-    used_sids = {s.servo_id for s in req.steps if s.type == "srv" and s.servo_id}
+    used_sids = {step.servo_id for step in _iter_action_steps(req.steps)
+                 if step.type == "srv" and step.servo_id}
     pin_map   = {int(k): v for k, v in (req.servos or {}).items()}
     for sid in sorted(used_sids):
         await _await_script_resume()
@@ -1312,10 +1313,10 @@ def _collect_condition_ids(steps: Sequence[ScriptNode]) -> list[str]:
         else:
             node_steps = [node]
         for step in node_steps:
-            evt = (step.evt or "").strip()
+            evt = EventBus._normalize((step.evt or "").strip())
             if step.type == "evt" and evt.startswith("IMG.MATCH."):
                 condition_ids.append(evt[len("IMG.MATCH."):])
-    return condition_ids
+    return list(dict.fromkeys(condition_ids))
 
 
 class MixedScriptRequest(BaseModel):
@@ -2037,9 +2038,20 @@ async def _submit_script(payload: dict):
     if any(step.type == "evt" and not (step.evt or "").strip() for step in action_steps):
         raise HTTPException(400, "EVT step 需要 evt 名稱")
 
+    referenced_condition_ids = _collect_condition_ids(req.steps)
+    for condition_id in referenced_condition_ids:
+        condition = condition_manager.get(condition_id)
+        if condition is None:
+            raise HTTPException(422, f"Condition {condition_id} is unavailable")
+        if snapshot_pool.get(condition.snapshot_id) is None:
+            raise HTTPException(
+                422,
+                f"Snapshot {condition.snapshot_id} for Condition {condition_id} is unavailable",
+            )
+
     req.condition_ids = list(dict.fromkeys([
         *img_import_summary["condition_map"].values(),
-        *_collect_condition_ids(req.steps),
+        *referenced_condition_ids,
     ]))
 
     if (_script_runner_task is None or _script_runner_task.done()) and _script_queue.empty():
@@ -2103,6 +2115,15 @@ async def _import_script_bundle(req: "ScriptBundleImportRequest"):
         len(req.img_bundle.conditions) if req.img_bundle else 0,
         len(req.steps),
     )
+    bundle_condition_ids = {condition.condition_id for condition in req.img_bundle.conditions}
+    missing_condition_ids = [
+        condition_id for condition_id in _collect_condition_ids(req.steps)
+        if condition_id not in bundle_condition_ids
+    ]
+    if missing_condition_ids:
+        missing = ", ".join(missing_condition_ids)
+        raise HTTPException(422, f"Missing bundle Condition payload for referenced Condition(s): {missing}")
+
     # Ensure camera is running whenever an IMG bundle is loaded (e.g. via curl with no UI).
     if req.img_bundle and req.img_bundle.conditions and (not camera or not camera.isOpened()):
         try:
@@ -2145,16 +2166,10 @@ async def _import_script_bundle(req: "ScriptBundleImportRequest"):
         )
         condition_map[cond.condition_id] = new_cid
 
-    remapped_steps: list[dict[str, Any]] = []
-    for step in req.steps:
-        data = step.model_dump()
-        evt_name = EventBus._normalize(data.get("evt") or "")
-        if evt_name.startswith("IMG.MATCH."):
-            old_cid = evt_name[len("IMG.MATCH."):]
-            new_cid = condition_map.get(old_cid)
-            if new_cid:
-                data["evt"] = f"IMG.MATCH.{new_cid}"
-        remapped_steps.append(data)
+    remapped_steps = [
+        _remap_imported_node(step.model_dump(), condition_map)
+        for step in req.steps
+    ]
 
     img_import = {
         "snapshots": len(snapshot_map),
@@ -2182,6 +2197,41 @@ async def _import_script_bundle(req: "ScriptBundleImportRequest"):
         "steps": remapped_steps,
         "img_import": img_import,
     }
+
+
+def _remap_imported_node(node: dict[str, Any], condition_map: dict[str, str]) -> dict[str, Any]:
+    result = dict(node)
+    node_type = result.get("type")
+    if node_type == "if_else":
+        condition_id = result.get("condition_id")
+        if condition_id not in condition_map:
+            raise HTTPException(422, f"Missing bundle Condition payload for Condition {condition_id}")
+        result["condition_id"] = condition_map[condition_id]
+        result["then_steps"] = [
+            _remap_imported_node(child, condition_map) for child in result.get("then_steps", [])
+        ]
+        result["else_steps"] = [
+            _remap_imported_node(child, condition_map) for child in result.get("else_steps", [])
+        ]
+    elif node_type == "do_while":
+        condition_id = result.get("condition_id")
+        if condition_id not in condition_map:
+            raise HTTPException(422, f"Missing bundle Condition payload for Condition {condition_id}")
+        result["condition_id"] = condition_map[condition_id]
+        result["steps"] = [
+            _remap_imported_node(child, condition_map) for child in result.get("steps", [])
+        ]
+    elif node_type == "evt":
+        event_name = EventBus._normalize(result.get("evt") or "")
+        if event_name.startswith("IMG.MATCH."):
+            old_condition_id = event_name[len("IMG.MATCH."):]
+            if old_condition_id not in condition_map:
+                raise HTTPException(
+                    422,
+                    f"Missing bundle Condition payload for Condition {old_condition_id}",
+                )
+            result["evt"] = f"IMG.MATCH.{condition_map[old_condition_id]}"
+    return result
 
 @app.get("/script/status")
 async def script_status():

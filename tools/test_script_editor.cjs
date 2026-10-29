@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 const html = fs.readFileSync(path.join(__dirname, '../server/static/index.html'), 'utf8');
-const editor = html.slice(html.indexOf('function getSSValues()'), html.indexOf('function collectImgBundle()'));
+const editor = html.slice(html.indexOf('function getSSValues()'), html.indexOf('function importJSON()'));
 
 function createEditor(storage = {}) {
   const renderedRows = [];
@@ -24,6 +24,7 @@ function createEditor(storage = {}) {
       appendChild(child) { this.children.push(child); return child; },
       addEventListener(name, handler) { listeners[name] = handler; },
       dispatch(name, event = {}) { listeners[name]?.(event); },
+      click() {},
       listeners,
     };
   }
@@ -76,12 +77,18 @@ function createEditor(storage = {}) {
     'runtime-prog-step': { textContent: '' },
   };
   const resetCalls = [];
+  const exportData = { value: null };
   const context = vm.createContext({
     elements,
     resetCalls,
     renderedRows,
     logs,
     fetchCalls,
+    Blob: class Blob {
+      constructor(parts) { this.parts = parts; }
+    },
+    URL: { createObjectURL: blob => { exportData.value = blob.parts[0]; return 'blob:export'; } },
+    exportData,
     storage,
     attachedMap: {},
     localStorage: {
@@ -397,6 +404,64 @@ test('nested imported actions receive unique editor IDs and nested blocks are re
   }]), /cannot be nested/i);
 });
 
+test('structured imports assign unique IDs recursively and preserve legacy flat steps', () => {
+  const editor = createEditor();
+  const imported = editor.normalizeImportedSteps([
+    {
+      type: 'if_else', condition_id: 'door',
+      then_steps: [{ type: 'kbd', cmd: 'KEY:A' }],
+      else_steps: [{ type: 'evt', evt: 'IMG.MATCH.other' }],
+    },
+    {
+      type: 'do_while', condition_id: 'loop', repeat_when: 'not_match',
+      max_iterations: 4, steps: [{ type: 'srv', servo_id: 2 }],
+    },
+  ]);
+  editor.steps = imported;
+  const ids = [
+    imported[0]._id, imported[0].then_steps[0]._id, imported[0].else_steps[0]._id,
+    imported[1]._id, imported[1].steps[0]._id,
+  ];
+  assert.equal(new Set(ids).size, ids.length);
+  assert.deepEqual(Array.from(imported.map(step => step.type)), ['if_else', 'do_while']);
+  assert.equal(imported[0].else_steps[0].evt, 'IMG.MATCH.other');
+  assert.deepEqual(JSON.parse(JSON.stringify(editor.normalizeImportedSteps([
+    { type: 'kbd', cmd: 'KEY:legacy' },
+  ]).map(({ _id, ...step }) => step))), [{ type: 'kbd', cmd: 'KEY:legacy' }]);
+});
+
+test('structured export is schema 6 and deduplicates nested condition snapshots', () => {
+  const editor = createEditor();
+  editor.conditions = [
+    { condition_id: 'door', name: 'Door', snapshot_id: 'shared', roi: [0, 0, 1, 1], threshold: 0.9 },
+    { condition_id: 'other', name: 'Other', snapshot_id: 'shared', roi: [0, 0, 1, 1], threshold: 0.8 },
+  ];
+  editor.snapshots = [{ id: 'shared', thumb_b64: 'c25hcA==' }];
+  editor.steps = editor.assignEditorStepIds([
+    {
+      type: 'if_else', condition_id: 'door',
+      then_steps: [{ type: 'kbd', cmd: 'KEY:A' }],
+      else_steps: [{ type: 'evt', evt: 'IMG.MATCH.other' }],
+    },
+    {
+      type: 'do_while', condition_id: 'door', repeat_when: 'match',
+      max_iterations: 3, steps: [{ type: 'evt', evt: 'IMG.MATCH.door' }],
+    },
+  ]);
+  editor.exportJSON();
+  const exported = JSON.parse(editor.exportData.value || '{}');
+  assert.equal(exported.schema_version, 6);
+  assert.equal(exported.steps[0].type, 'if_else');
+  assert.equal(exported.steps[0]._id, undefined);
+  assert.equal(exported.steps[0].else_steps[0]._id, undefined);
+  assert.equal(exported.steps[0].else_steps[0].evt, 'IMG.MATCH.other');
+  assert.equal(exported.steps[1].condition_id, 'door');
+  assert.deepEqual(exported.img_bundle.conditions.map(item => item.condition_id), ['door', 'other']);
+  assert.equal(exported.img_bundle.snapshots.length, 1);
+  editor.steps[1].condition_id = 'missing';
+  assert.deepEqual(Array.from(editor.collectImgBundle().missing), ['missing condition missing']);
+});
+
 test('RUN submits nested block steps in order without leaking editor IDs', async () => {
   const editor = createEditor();
   editor.addKbdStep();
@@ -649,7 +714,7 @@ test('OCR steps retain normalized ROI and settings through JSON round trips', ()
   assert.equal(editor.steps[0].variable, 'digits');
   const exported = JSON.parse(JSON.stringify(editor.steps.map(({ _id, ...step }) => step)));
   const imported = editor.normalizeImportedSteps(exported);
-  assert.deepEqual(JSON.parse(JSON.stringify(imported)), exported);
+  assert.deepEqual(JSON.parse(JSON.stringify(editor.serializeEditorSteps(imported))), exported);
   assert.equal(exported[0].snapshot_id, undefined);
   assert.ok(editor.renderedRows[0].innerHTML.includes('OCR'));
 });
@@ -731,7 +796,7 @@ test('IMAGE_MOVE steps embed their template and materialize portable defaults', 
   assert.deepEqual(Array.from(step.image_move.search_roi), [0, 0, 1, 1]);
   const exported = JSON.parse(JSON.stringify(editor.steps.map(({ _id, ...item }) => item)));
   const imported = editor.normalizeImportedSteps(exported);
-  assert.deepEqual(JSON.parse(JSON.stringify(imported)), exported);
+  assert.deepEqual(JSON.parse(JSON.stringify(editor.serializeEditorSteps(imported))), exported);
   assert.equal(imported[0].image_move.template_b64, 'dGVzdA==');
   assert.ok(editor.renderedRows.at(-1).innerHTML.includes('IMAGE_MOVE'));
 });
