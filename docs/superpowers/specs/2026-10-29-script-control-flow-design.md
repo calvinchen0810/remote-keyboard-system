@@ -16,6 +16,7 @@ Users need Scratch-like control flow without replacing the existing step-list wo
 - Make branch decisions against a fresh camera frame using an existing Condition.
 - Preserve the existing script-wide Loop behavior and legacy flat JSON requests.
 - Carry structured blocks through editor import/export, image bundles, API execution, and read-only runtime status.
+- Retain the most recent failed job so a control-flow failure remains inspectable after the runner releases it.
 - Preserve FIFO, pause/resume, stop, and existing action-step behavior.
 
 ## Non-goals
@@ -103,7 +104,9 @@ Image-bundle collection and import must traverse the top-level steps and both if
 
 ## Execution Status
 
-Execution Status remains read-only and separate from the local editing draft. For an active if/else block it shows the selected branch and the single-frame match result. For a do-while block it shows the current iteration and configured maximum. The active ordinary step inside a block uses the existing step progress/result representation. A limit failure is visible as a failed job with an explicit error message.
+Execution Status remains read-only and separate from the local editing draft. For an active if/else block it shows the selected branch and the single-frame match result. For a do-while block it shows the current iteration and configured maximum. The active ordinary step inside a block uses the existing step progress/result representation.
+
+The runtime retains only the most recent failed job, including its structured detail and explicit error message, after the active runner releases it. A later successful job does not clear this failure. A newer failed job replaces it; STOP / workspace clear removes it. Successful completed jobs are still removed immediately, so this is not general execution history.
 
 ## Validation and error handling
 
@@ -128,7 +131,7 @@ Focused automated tests cover:
 - Request validation for unknown/missing conditions, nested blocks, empty slots, invalid iteration values, and the 200-action-step aggregate limit.
 - If/else match and non-match behavior using fresh frames.
 - Do-while's at-least-once behavior, both repeat directions, normal exit, and failure when the limit is reached while repetition is still required.
-- Execution Status branch/iteration details and explicit runtime failures.
+- Execution Status branch/iteration details and explicit runtime failures, including retention of only the latest failed job until it is replaced or cleared.
 - PAUSE / RESUME / STOP and FIFO ordering while a block is active.
 
 ## Acceptance criteria
