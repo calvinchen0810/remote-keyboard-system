@@ -163,6 +163,17 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
 #script-resume-btn[hidden]{display:none}
 #tbl-wrap{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0}
 #empty-hint{padding:14px;text-align:center;color:var(--fg3);font-family:var(--mono);font-size:10px}
+.control-block{border:1px solid var(--br);background:var(--card);padding:4px 6px;margin:3px 0}
+.control-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-family:var(--mono);font-size:10px}
+.control-head>strong{color:var(--grn2)}
+.control-head label{display:flex;align-items:center;gap:3px;color:var(--fg3)}
+.control-head input[type=number]{width:64px}
+.control-slot{border:1px dashed var(--bd);border-left:2px solid var(--grn2);margin:5px 0 3px 14px;padding:3px 4px;min-height:28px;background:rgba(34,197,94,.025)}
+.control-slot-label{font-family:var(--mono);font-size:9px;color:var(--fg3)}
+.control-slot-table{margin-top:2px}
+.control-slot-table:empty{display:none}
+#block-delete-dialog:not([hidden]){position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:16px}
+.block-delete-card{display:flex;flex-direction:column;gap:8px;min-width:240px;padding:16px;background:var(--card);border:1px solid var(--br);box-shadow:0 8px 32px #000}
 .stbl{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px;table-layout:fixed}
 .stbl thead th{position:sticky;top:0;z-index:1;background:var(--card);color:var(--fg3);font-size:10px;letter-spacing:.8px;padding:4px 4px;text-align:left;border-bottom:1px solid var(--br);font-weight:normal}
 .stbl tbody tr{border-bottom:1px solid var(--bd);cursor:grab}
@@ -481,6 +492,8 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
     <button class="btn-r btn-sm" onclick="addMseStep()">＋ MSE</button>
     <button class="btn-b btn-sm" onclick="addEvtStep()">＋ EVT</button>
     <button class="btn-t btn-sm" id="add-img-btn" onclick="toggleImgPicker(event)">＋ IMG</button>
+    <button class="btn-a btn-sm" onclick="addIfElseBlock()">＋ IF / ELSE</button>
+    <button class="btn-a btn-sm" onclick="addDoWhileBlock()">＋ DO-WHILE</button>
     <div style="width:1px;height:12px;background:var(--bd);margin:0 2px"></div>
     <div style="display:flex;align-items:center;gap:3px;font-family:var(--mono);font-size:9px;color:var(--fg3)">
       ms:<input type="number" id="default-delay" value="1000" min="0" max="30000" step="500"
@@ -511,6 +524,7 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
     </table>
     <div id="empty-hint">// no steps yet — ＋ SRV uses current Single Step values</div>
   </div>
+  <div id="block-delete-dialog" hidden></div>
   <div id="sc-prog-row">
     <span id="sc-prog-lbl" style="font-family:var(--mono);font-size:9px;color:var(--grn);white-space:nowrap">0 / 0</span>
     <div class="prog-tr"><div class="prog-fi" id="sc-prog-fi"></div></div>
@@ -931,6 +945,125 @@ function deleteServoAction(idEncoded){
 function getDefaultDelay(){return parseInt(document.getElementById('default-delay').value)||1000;}
 const KBD_SPECIAL_KEYS=['ENTER','ESC','TAB','DELETE','UP','DOWN','LEFT','RIGHT','HOME','END','PAGEUP','PAGEDOWN','F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12'];
 
+function reportEditorError(message){addLog('srv','✘ '+message,'cerr');return false;}
+function addIfElseBlock(conditionId=""){
+  const block={type:'if_else',_id:++stepIdCnt,condition_id:conditionId,then_steps:[],else_steps:[]};
+  steps.push(block);renderSteps();return block;
+}
+function addDoWhileBlock(conditionId=""){
+  const block={type:'do_while',_id:++stepIdCnt,condition_id:conditionId,repeat_when:'match',max_iterations:10,steps:[]};
+  steps.push(block);renderSteps();return block;
+}
+function findStepLocation(stepId){
+  for(let index=0;index<steps.length;index++){
+    const node=steps[index];
+    if(node._id===stepId)return {list:steps,index,step:node};
+    const slots=node.type==='if_else'?['then_steps','else_steps']:node.type==='do_while'?['steps']:[];
+    for(const slot of slots){
+      const list=node[slot]||[],childIndex=list.findIndex(item=>item._id===stepId);
+      if(childIndex>=0)return {list,index:childIndex,step:list[childIndex],parent:node,slot};
+    }
+  }
+  return null;
+}
+function moveStepToSlot(stepId,blockId,slot,beforeStepId=null){
+  const source=findStepLocation(stepId),destination=findStepLocation(blockId);
+  if(!source)return reportEditorError('Cannot move a missing script step.');
+  if(!destination||!['if_else','do_while'].includes(destination.step.type))return reportEditorError('Cannot move into a missing control block.');
+  if(source.step.type==='if_else'||source.step.type==='do_while')return reportEditorError('Control blocks cannot be nested.');
+  const allowed=destination.step.type==='if_else'?['then_steps','else_steps']:['steps'];
+  if(!allowed.includes(slot))return reportEditorError('Unknown control-block slot.');
+  if(source.step._id===blockId)return reportEditorError('A block cannot be moved into itself.');
+  if(beforeStepId===stepId)return true;
+  const target=destination.step[slot];
+  if(beforeStepId!==null&&!target.some(item=>item._id===beforeStepId))return reportEditorError('Drop target is not in this slot.');
+  source.list.splice(source.index,1);
+  const targetIndex=beforeStepId===null?target.length:target.findIndex(item=>item._id===beforeStepId);
+  target.splice(targetIndex,0,source.step);
+  renderSteps();return true;
+}
+function moveStepToTopLevel(stepId,beforeStepId=null){
+  const source=findStepLocation(stepId);
+  if(!source)return reportEditorError('Cannot move a missing script step.');
+  if(beforeStepId===stepId)return true;
+  const before=beforeStepId===null?-1:steps.findIndex(item=>item._id===beforeStepId);
+  if(beforeStepId!==null&&before<0)return reportEditorError('Top-level drop target no longer exists.');
+  source.list.splice(source.index,1);
+  const targetIndex=beforeStepId===null?steps.length:steps.findIndex(item=>item._id===beforeStepId);
+  if(targetIndex<0)return reportEditorError('Top-level drop target no longer exists.');
+  steps.splice(targetIndex,0,source.step);
+  renderSteps();return true;
+}
+function updateControlBlock(id,key,value){
+  const location=findStepLocation(id),block=location?.step;
+  if(!block||!['if_else','do_while'].includes(block.type))return reportEditorError('Control block no longer exists.');
+  if(key==='condition_id')block.condition_id=value;
+  else if(block.type==='do_while'&&key==='repeat_when'&&['match','not_match'].includes(value))block.repeat_when=value;
+  else if(block.type==='do_while'&&key==='max_iterations')block.max_iterations=value===''?'':Number(value);
+  else return reportEditorError('Invalid control-block setting.');
+  renderSteps();return true;
+}
+let pendingBlockDeleteId=null;
+function requestBlockDelete(blockId){
+  const location=findStepLocation(blockId);
+  if(!location||!['if_else','do_while'].includes(location.step.type))return reportEditorError('Control block no longer exists.');
+  pendingBlockDeleteId=blockId;
+  const dialog=document.getElementById('block-delete-dialog');
+  if(dialog){dialog.hidden=false;dialog.innerHTML=`<div class="block-delete-card" role="dialog" aria-modal="true" aria-labelledby="block-delete-title">
+    <strong id="block-delete-title">Remove this control block?</strong>
+    <span>Choose what to do with its actions.</span>
+    <button class="btn-a btn-sm" onclick="resolveBlockDelete('unwrap')">Unwrap steps</button>
+    <button class="btn-r btn-sm" onclick="resolveBlockDelete('delete')">Delete all</button>
+    <button class="btn-sm" onclick="resolveBlockDelete('cancel')">Cancel</button>
+  </div>`;}
+  return true;
+}
+function resolveBlockDelete(choice){
+  const id=pendingBlockDeleteId;
+  if(!['unwrap','delete','cancel'].includes(choice))return reportEditorError('Choose unwrap, delete all, or cancel.');
+  pendingBlockDeleteId=null;
+  const dialog=document.getElementById('block-delete-dialog');
+  if(dialog){dialog.hidden=true;dialog.innerHTML='';}
+  if(choice==='cancel')return true;
+  const location=findStepLocation(id);
+  if(!location||!['if_else','do_while'].includes(location.step.type))return reportEditorError('Control block no longer exists.');
+  const block=location.step;
+  if(choice==='unwrap'){
+    const children=block.type==='if_else'?[...block.then_steps,...block.else_steps]:[...block.steps];
+    steps.splice(location.index,1,...children);
+  } else {
+    location.list.splice(location.index,1);
+  }
+  renderSteps();return true;
+}
+function validateControlFlowNodes(nodes){
+  let actionCount=0;
+  for(const node of nodes){
+    if(node.type==='if_else'){
+      if(!node.condition_id||!conditions.some(condition=>condition.condition_id===node.condition_id))throw new Error('Choose a valid Condition for IF / ELSE.');
+      if(!node.then_steps?.length&&!node.else_steps?.length)throw new Error('IF / ELSE needs at least one step.');
+      actionCount+=node.then_steps.length+node.else_steps.length;
+    } else if(node.type==='do_while'){
+      if(!node.condition_id||!conditions.some(condition=>condition.condition_id===node.condition_id))throw new Error('Choose a valid Condition for DO-WHILE.');
+      if(!node.steps?.length)throw new Error('DO-WHILE needs at least one step.');
+      if(!['match','not_match'].includes(node.repeat_when))throw new Error('Choose a valid DO-WHILE repeat direction.');
+      if(!Number.isInteger(node.max_iterations)||node.max_iterations<1||node.max_iterations>10000)throw new Error('DO-WHILE limit must be from 1 to 10000.');
+      actionCount+=node.steps.length;
+    } else actionCount++;
+    if(actionCount>200)throw new Error('A script can contain at most 200 action steps.');
+  }
+}
+function serializeEditorSteps(nodes){
+  return nodes.map(({_id,...node})=>{
+    if(node.type==='if_else'){
+      return {...node,then_steps:serializeEditorSteps(node.then_steps||[]),else_steps:serializeEditorSteps(node.else_steps||[])};
+    }
+    if(node.type==='do_while')return {...node,steps:serializeEditorSteps(node.steps||[])};
+    return node;
+  });
+}
+function escapeEditorAttr(value){return esc(value).replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
 function addSrvStep(){
   const ss=getSSValues();
   steps.push({type:'srv',_id:++stepIdCnt,
@@ -954,13 +1087,27 @@ function addOcrStep(settings){
   steps.push({type:'ocr',_id:++stepIdCnt,delay_ms:getDefaultDelay(),...config});
   renderSteps();
 }
+function listOcrVariables(list){
+  return [...new Set((list||[]).filter(step=>step.type==='ocr').map(step=>step.variable).filter(name=>typeof name==='string'&&/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(name)))];
+}
 function getOcrVariables(beforeId){
-  const index=steps.findIndex(step=>step._id===beforeId);
-  return [...new Set(steps.slice(0,index<0?steps.length:index).filter(step=>step.type==='ocr').map(step=>step.variable).filter(name=>typeof name==='string'&&/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(name)))];
+  const location=findStepLocation(beforeId);
+  if(!location)return [];
+  const rootIndex=location.parent?steps.indexOf(location.parent):location.index;
+  const available=[];
+  steps.slice(0,rootIndex).forEach(node=>{
+    if(node.type==='ocr')available.push(node.variable);
+    else if(node.type==='if_else'){
+      const thenNames=listOcrVariables(node.then_steps),elseNames=new Set(listOcrVariables(node.else_steps));
+      available.push(...thenNames.filter(name=>elseNames.has(name)));
+    } else if(node.type==='do_while')available.push(...listOcrVariables(node.steps));
+  });
+  if(location.parent)available.push(...listOcrVariables(location.list.slice(0,location.index)));
+  return [...new Set(available.filter(name=>typeof name==='string'&&/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(name)))];
 }
 function insertKbdVariable(id,name){
-  const step=steps.find(item=>item._id===id);
-  if(!step||step.type!=='kbd'||step.cmd_type!=='TYPE'||!getOcrVariables(id).includes(name))return;
+  const step=findStepLocation(id)?.step;
+  if(!step||step.type!=='kbd'||step.cmd_type!=='TYPE'||!getOcrVariables(id).includes(name))return reportEditorError('That OCR variable is not available at this step.');
   step.text=(step.text||'')+'${'+name+'}';
   renderSteps();
 }
@@ -978,15 +1125,20 @@ function validateImageMoveSettings(settings){
 function addImageMoveStep(settings,id=null){
   const image_move=validateImageMoveSettings(settings);
   if(id!==null){
-    const step=steps.find(item=>item._id===id&&item.type==='mse');
-    if(!step)throw new Error('Mouse step no longer exists.');
+    const step=findStepLocation(id)?.step;
+    if(!step||step.type!=='mse')return reportEditorError('Mouse step no longer exists.');
     Object.assign(step,{action:'IMAGE_MOVE',image_move});delete step.cmd;
   } else steps.push({type:'mse',_id:++stepIdCnt,delay_ms:getDefaultDelay(),action:'IMAGE_MOVE',image_move});
   renderSteps();
 }
 function addEvtStep(){steps.unshift({type:'evt',_id:++stepIdCnt,delay_ms:0,evt:'HELLO'});renderSteps();}
 function clearAllSteps(){steps=[];renderSteps();}
-function delStep(id){steps=steps.filter(s=>s._id!==id);renderSteps();}
+function delStep(id){
+  const location=findStepLocation(id);
+  if(!location)return reportEditorError('Script step no longer exists.');
+  if(location.step.type==='if_else'||location.step.type==='do_while')return requestBlockDelete(id);
+  location.list.splice(location.index,1);renderSteps();return true;
+}
 
 function applyWorkspaceCleared(){
   resetRuntimeView();
@@ -1256,6 +1408,22 @@ async function refreshRuntimeDetail(){
 function normalizeImportedSteps(rawSteps){
   const out=[];
   (rawSteps||[]).forEach(step=>{
+    if(step.type==='if_else'||step.type==='do_while'){
+      const slots=step.type==='if_else'?['then_steps','else_steps']:['steps'];
+      const normalized={...step};
+      if(step.type==='do_while'){
+        normalized.repeat_when=step.repeat_when??'match';
+        normalized.max_iterations=step.max_iterations??10;
+      }
+      slots.forEach(slot=>{
+        const children=step[slot]??[];
+        if(!Array.isArray(children))throw new Error('Control-block actions must be a list.');
+        if(children.some(child=>child.type==='if_else'||child.type==='do_while'))throw new Error('Control blocks cannot be nested.');
+        normalized[slot]=normalizeImportedSteps(children);
+      });
+      out.push(normalized);
+      return;
+    }
     if(step.type==='ocr')step={...step,...validateOcrSettings(step)};
     if(step.type==='mse'&&step.action==='IMAGE_CLICK')throw new Error('IMAGE_CLICK was removed. Use IMAGE_MOVE, then add CLICK or DBLCLICK separately.');
     if(step.type==='mse'&&step.action==='IMAGE_MOVE')step={...step,image_move:validateImageMoveSettings(step.image_move||{})};
@@ -1270,13 +1438,104 @@ function normalizeImportedSteps(rawSteps){
   });
   return out;
 }
+function assignEditorStepIds(nodes){
+  return nodes.map(step=>{
+    const node={...step,_id:++stepIdCnt};
+    if(node.type==='if_else'){
+      node.then_steps=assignEditorStepIds(node.then_steps||[]);
+      node.else_steps=assignEditorStepIds(node.else_steps||[]);
+    } else if(node.type==='do_while')node.steps=assignEditorStepIds(node.steps||[]);
+    return node;
+  });
+}
 
 function renderSteps(){
   const tb=document.getElementById('steps-tbody'),hint=document.getElementById('empty-hint');
   tb.innerHTML='';hint.style.display=steps.length?'none':'';
-  document.getElementById('step-cnt').textContent=steps.length+' STEPS';
-  steps.forEach((s,i)=>{
-    const tr=document.createElement('tr');tr.dataset.idx=i;tr.draggable=true;
+  document.getElementById('step-cnt').textContent=countEditorActions(steps)+' STEPS';
+  renderStepList(steps,tb);
+  tb.ondragover=event=>{if(event.target===tb)event.preventDefault();};
+  tb.ondrop=event=>{
+    if(event.target!==tb)return;
+    event.preventDefault();
+    const id=Number(event.dataTransfer?.getData('text/plain')||dragSrc);
+    if(id)moveStepToTopLevel(id);
+    dragSrc=null;
+  };
+  hint.ondragover=event=>event.preventDefault();
+  hint.ondrop=event=>{
+    event.preventDefault();event.stopPropagation();
+    const id=Number(event.dataTransfer?.getData('text/plain')||dragSrc);
+    if(id)moveStepToTopLevel(id);
+    dragSrc=null;
+  };
+}
+function countEditorActions(nodes){
+  return nodes.reduce((count,node)=>count+(node.type==='if_else'
+    ?countEditorActions(node.then_steps||[])+countEditorActions(node.else_steps||[])
+    :node.type==='do_while'?countEditorActions(node.steps||[]):1),0);
+}
+function editorDragId(event){
+  return Number(event.dataTransfer?.getData('text/plain')||dragSrc);
+}
+function wireTopLevelBlockDrag(row,block,index){
+  row.draggable=true;row.dataset.idx=index;
+  row.addEventListener('dragstart',event=>{
+    dragSrc=block._id;
+    event.dataTransfer?.setData('text/plain',String(block._id));
+    if(event.dataTransfer)event.dataTransfer.effectAllowed='move';
+  });
+  row.addEventListener('dragover',event=>{event.preventDefault();});
+  row.addEventListener('drop',event=>{
+    event.preventDefault();event.stopPropagation();
+    const id=editorDragId(event);
+    if(id)moveStepToTopLevel(id,block._id);
+    dragSrc=null;
+  });
+}
+function renderControlBlock(block,index,tb){
+  const row=document.createElement('tr'),cell=document.createElement('td');
+  cell.colSpan=5;
+  const panel=document.createElement('div');
+  panel.className='control-block '+(block.type==='if_else'?'control-if':'control-repeat');
+  const escAttr=escapeEditorAttr;
+  const options=conditions.map(condition=>{
+    const id=escAttr(condition.condition_id),label=esc(condition.name||condition.condition_id);
+    return `<option value="${id}"${block.condition_id===condition.condition_id?' selected':''}>${label}</option>`;
+  }).join('');
+  const conditionSelect=`<select class="ti-s" aria-label="Control block condition" onchange="updateControlBlock(${block._id},'condition_id',this.value)"><option value="">Choose Condition...</option>${options}</select>`;
+  panel.innerHTML=block.type==='if_else'
+    ?`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>IF / ELSE</strong>${conditionSelect}<button class="del-btn" aria-label="Remove control block" onclick="requestBlockDelete(${block._id})">✕</button></div>`
+    :`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>DO-WHILE</strong>${conditionSelect}<label>repeat <select class="ti-s" aria-label="Repeat when" onchange="updateControlBlock(${block._id},'repeat_when',this.value)"><option value="match"${block.repeat_when==='match'?' selected':''}>MATCH</option><option value="not_match"${block.repeat_when==='not_match'?' selected':''}>NOT MATCH</option></select></label><label>max <input class="ti" aria-label="Maximum iterations" type="number" min="1" max="10000" value="${escapeEditorAttr(block.max_iterations)}" onchange="updateControlBlock(${block._id},'max_iterations',this.value)"></label><button class="del-btn" aria-label="Remove control block" onclick="requestBlockDelete(${block._id})">✕</button></div>`;
+  const slots=block.type==='if_else'
+    ?[['then_steps','THEN'],['else_steps','ELSE']]:[['steps','BODY']];
+  slots.forEach(([slot,label])=>{
+    const drop=document.createElement('div');
+    drop.className='control-slot';
+    drop.innerHTML=`<div class="control-slot-label">${label} · drop actions here</div>`;
+    const table=document.createElement('table'),body=document.createElement('tbody');
+    table.className='stbl control-slot-table';table.appendChild(body);drop.appendChild(table);
+    drop.addEventListener('dragover',event=>event.preventDefault());
+    drop.addEventListener('drop',event=>{
+      event.preventDefault();event.stopPropagation();
+      const id=editorDragId(event);
+      if(id)moveStepToSlot(id,block._id,slot);
+      dragSrc=null;
+    });
+    panel.appendChild(drop);
+    renderStepList(block[slot]||[],body,block._id,slot);
+  });
+  cell.appendChild(panel);row.appendChild(cell);
+  wireTopLevelBlockDrag(row,block,index);
+  tb.appendChild(row);
+}
+function renderStepList(list,tb,parentBlockId=null,parentSlot=null){
+  list.forEach((s,i)=>{
+    if(s.type==='if_else'||s.type==='do_while'){
+      renderControlBlock(s,i,tb);
+      return;
+    }
+    const tr=document.createElement('tr');tr.dataset.idx=i;tr.dataset.stepId=s._id;tr.draggable=true;
     let params='';
     if(s.type==='evt'){
       params=`<span style="color:var(--fg3);font-size:9px">wait</span>
@@ -1311,7 +1570,7 @@ function renderSteps(){
       } else if(s.cmd_type==='TYPE'){
         const variables=getOcrVariables(s._id);
         fields=`<input class="ti" value="${esc(s.text||'')}" style="width:170px;max-width:100%;min-width:0" oninput="updStep(${s._id},'text',this.value)">
-          <select class="ti-s" aria-label="Insert OCR variable" style="width:106px" onchange="insertKbdVariable(${s._id},this.value)"><option value="">Variable...</option>${variables.map(name=>`<option value="${name}">${name}</option>`).join('')}</select>`;
+          <select class="ti-s" aria-label="Insert OCR variable" style="width:106px" onchange="insertKbdVariable(${s._id},this.value)"><option value="">Variable...</option>${variables.map(name=>`<option value="${escapeEditorAttr(name)}">${esc(name)}</option>`).join('')}</select>`;
       } else {
         fields=`<select class="ti-s" style="width:80px" onchange="updStep(${s._id},'key',this.value)">${KBD_SPECIAL_KEYS.map(k=>`<option${k===(s.key||'ENTER')?' selected':''}>${k}</option>`).join('')}</select>`;
       }
@@ -1349,22 +1608,34 @@ function renderSteps(){
           onclick="event.stopPropagation();showPop(this,'DELAY ms',0,30000,500)"></td>
       <td>${params}</td>
       <td><button class="del-btn" onclick="delStep(${s._id})">✕</button></td>`;
-    tr.addEventListener('dragstart',e=>{dragSrc=i;tr.classList.add('dragging');e.dataTransfer.effectAllowed='move';});
+    tr.addEventListener('dragstart',e=>{
+      e.stopPropagation();dragSrc=s._id;tr.classList.add('dragging');
+      e.dataTransfer?.setData('text/plain',String(s._id));
+      if(e.dataTransfer)e.dataTransfer.effectAllowed='move';
+    });
     tr.addEventListener('dragend',()=>{tr.classList.remove('dragging');document.querySelectorAll('#steps-tbody tr').forEach(r=>r.classList.remove('drag-over'));});
     tr.addEventListener('dragover',e=>{e.preventDefault();document.querySelectorAll('#steps-tbody tr').forEach(r=>r.classList.remove('drag-over'));tr.classList.add('drag-over');});
-    tr.addEventListener('drop',e=>{e.preventDefault();if(dragSrc!==null&&dragSrc!==i){const m=steps.splice(dragSrc,1)[0];steps.splice(i,0,m);dragSrc=null;renderSteps();}});
+    tr.addEventListener('drop',e=>{
+      e.preventDefault();e.stopPropagation();
+      const id=editorDragId(e);
+      if(id){
+        if(parentBlockId!==null)moveStepToSlot(id,parentBlockId,parentSlot,s._id);
+        else moveStepToTopLevel(id,s._id);
+      }
+      dragSrc=null;
+    });
     tb.appendChild(tr);
   });
 }
-function updStep(id,key,val){const s=steps.find(x=>x._id===id);if(!s)return;const nk=['delay_ms','servo_id','angle','speed','duration_ms','home','x','y','amount','timeout_ms','stable_hits'];s[key]=nk.includes(key)?parseInt(val)||0:val;}
+function updStep(id,key,val){const s=findStepLocation(id)?.step;if(!s||s.type==='if_else'||s.type==='do_while')return reportEditorError('Action step no longer exists.');const nk=['delay_ms','servo_id','angle','speed','duration_ms','home','x','y','amount','timeout_ms','stable_hits'];s[key]=nk.includes(key)?parseInt(val)||0:val;}
 function updStepKbd(id,t){
-  const s=steps.find(x=>x._id===id);
-  if(!s)return;
+  const s=findStepLocation(id)?.step;
+  if(!s||s.type!=='kbd')return reportEditorError('Keyboard step no longer exists.');
   s.cmd_type=t;
   if(t==='KEY'&&!KBD_SPECIAL_KEYS.includes(s.key))s.key='ENTER';
   renderSteps();
 }
-function updStepMse(id,t){if(t==='IMAGE_MOVE'){editImageMoveStep(id);return;}const s=steps.find(x=>x._id===id);if(s){s.action=t;renderSteps();}}
+function updStepMse(id,t){const s=findStepLocation(id)?.step;if(!s||s.type!=='mse')return reportEditorError('Mouse step no longer exists.');if(t==='IMAGE_MOVE'){editImageMoveStep(id);return;}s.action=t;renderSteps();}
 
 function collectImgBundle(){
   const conditionIds=[...new Set(
@@ -1451,7 +1722,7 @@ function handleImport(e){
     document.getElementById('script-name').value=typeof imported.name==='string'?imported.name:'';
     if(typeof imported.loop==='boolean')document.getElementById('loop-cb').checked=imported.loop;
     if(Array.isArray(imported.steps)){
-      steps=normalizeImportedSteps(imported.steps).map(s=>({...s,_id:++stepIdCnt}));
+      steps=assignEditorStepIds(normalizeImportedSteps(imported.steps));
       renderSteps();
       addLog('srv','Imported '+steps.length+' steps','cok');
     }
@@ -1461,14 +1732,16 @@ function handleImport(e){
 
 // ── Run ──────────────────────────────────────────────────────
 async function runScript(){
-  if(!steps.length){addLog('srv','⚠ no steps','cerr');return;}
+  try{validateControlFlowNodes(steps);}
+  catch(error){addLog('srv','✘ '+error.message,'cerr');return;}
+  if(!countEditorActions(steps)){addLog('srv','⚠ no steps','cerr');return;}
   const loop=document.getElementById('loop-cb').checked;
   // 全部走後端 /script/run，支援 SRV + KBD + MSE 混合
   const body={
     name:document.getElementById('script-name').value.trim()||null,
     loop,
     servos:attachedMap,
-    steps:steps.map(({_id,...s})=>s)
+    steps:serializeEditorSteps(steps)
   };
   const r=await fetch('/script/run',{method:'POST',
     headers:{'Content-Type':'application/json','X-RKS-Source':'script-editor'},
@@ -1476,10 +1749,10 @@ async function runScript(){
   const d=await r.json().catch(()=>({}));
   if(r.ok){
     if(d.pending){
-      addLog('srv',`→ SCRIPT PENDING EVT:${d.gate_evt}  steps=${steps.length}`,'crun');
+      addLog('srv',`→ SCRIPT PENDING EVT:${d.gate_evt}  steps=${countEditorActions(steps)}`,'crun');
     } else {
-      addLog('srv',`→ SCRIPT ENQUEUED  ${steps.length} steps  loop=${loop}  queued=${d.queued||0}`,'csnd');
-      setProgress(0,steps.length);
+      addLog('srv',`→ SCRIPT ENQUEUED  ${countEditorActions(steps)} steps  loop=${loop}  queued=${d.queued||0}`,'csnd');
+      setProgress(0,countEditorActions(steps));
     }
   } else {
     addLog('srv','✘ '+(d.detail||'run failed'),'cerr');
@@ -2346,10 +2619,11 @@ function setRoiModalMode(mode){
 }
 function openOcrModal(snapId,stepId=null){
   if(!snapshots.some(snap=>snap.id===snapId))return;
+  const step=stepId===null?null:findStepLocation(stepId)?.step;
+  if(stepId!==null&&step?.type!=='ocr')return reportEditorError('OCR step no longer exists.');
   openCondModal(snapId);
   setRoiModalMode(true);
   vcmOcrStepId=stepId;
-  const step=steps.find(item=>item._id===stepId&&item.type==='ocr');
   document.getElementById('vcm-name').value=step?.variable||'digits';
   document.getElementById('vcm-ocr-timeout').value=step?.timeout_ms??5000;
   document.getElementById('vcm-ocr-stable').value=step?.stable_hits??2;
@@ -2362,6 +2636,7 @@ function openOcrModal(snapId,stepId=null){
   if(document.getElementById('vcm-snap-img').complete&&vcmRoi){syncDrawCanvas();drawSavedRoi(vcmRoi);}
 }
 async function editOcrStep(id){
+  if(id!==null&&findStepLocation(id)?.step?.type!=='ocr')return reportEditorError('OCR step no longer exists.');
   if(!snapshots.length)await takeSnapshot();
   if(!snapshots.length){addLog('srv','OCR needs a SNAP to select the region','cerr');return;}
   openOcrModal(snapshots[snapshots.length-1].id,id);
@@ -2375,8 +2650,8 @@ function saveOcrSettings(){
   try{
     const config=ocrModalSettings();
     if(vcmOcrStepId!==null){
-      const step=steps.find(item=>item._id===vcmOcrStepId&&item.type==='ocr');
-      if(!step)throw new Error('OCR step no longer exists.');
+      const step=findStepLocation(vcmOcrStepId)?.step;
+      if(!step||step.type!=='ocr')throw new Error('OCR step no longer exists.');
       Object.assign(step,config);renderSteps();
     } else addOcrStep(config);
     closeCondModal();
@@ -2405,8 +2680,9 @@ async function testOcrRegion(){
 }
 function openImageMoveModal(snapId,stepId=null){
   if(!snapshots.some(snap=>snap.id===snapId))return;
+  const step=stepId===null?null:findStepLocation(stepId)?.step;
+  if(stepId!==null&&step?.type!=='mse')return reportEditorError('Mouse step no longer exists.');
   openCondModal(snapId);setRoiModalMode('image');vcmImageStepId=stepId;
-  const step=steps.find(item=>item._id===stepId&&item.type==='mse');
   const config=step?.image_move?validateImageMoveSettings(step.image_move):null;
   vcmImageConfig=config;vcmImageDirty=!config;
   document.getElementById('vcm-image-threshold').value=config?.threshold??0.92;
@@ -2423,6 +2699,7 @@ function openImageMoveModal(snapId,stepId=null){
   }
 }
 async function editImageMoveStep(id){
+  if(findStepLocation(id)?.step?.type!=='mse')return reportEditorError('Mouse step no longer exists.');
   if(!snapshots.length)await takeSnapshot();
   if(!snapshots.length){renderSteps();addLog('srv','Take a SNAP to select a click target','cerr');return;}
   openImageMoveModal(snapshots[snapshots.length-1].id,id);

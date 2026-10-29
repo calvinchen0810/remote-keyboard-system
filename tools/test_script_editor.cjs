@@ -9,11 +9,40 @@ const editor = html.slice(html.indexOf('function getSSValues()'), html.indexOf('
 
 function createEditor(storage = {}) {
   const renderedRows = [];
+  const logs = [];
+  const fetchCalls = [];
+  function createElement() {
+    const listeners = {};
+    let markup = '';
+    return {
+      dataset: {},
+      style: {},
+      children: [],
+      classList: { add() {}, remove() {} },
+      get innerHTML() { return markup; },
+      set innerHTML(value) { markup = value; this.children.length = 0; },
+      appendChild(child) { this.children.push(child); return child; },
+      addEventListener(name, handler) { listeners[name] = handler; },
+      dispatch(name, event = {}) { listeners[name]?.(event); },
+      listeners,
+    };
+  }
+  const stepsTbody = createElement();
+  Object.defineProperty(stepsTbody, 'innerHTML', {
+    get() { return this._markup || ''; },
+    set(value) {
+      this._markup = value;
+      this.children.length = 0;
+      renderedRows.length = 0;
+    },
+  });
+  stepsTbody.appendChild = row => { renderedRows.push(row); stepsTbody.children.push(row); };
   const elements = {
     'default-delay': { value: '1000' },
-    'steps-tbody': { innerHTML: '', appendChild(row) { renderedRows.push(row); } },
-    'empty-hint': { style: {} },
+    'steps-tbody': stepsTbody,
+    'empty-hint': Object.assign(createElement(), { style: {} }),
     'step-cnt': {},
+    'block-delete-dialog': { hidden: true, innerHTML: '' },
     'loop-cb': { checked: true },
     'script-name': { value: '' },
     'ss-delay': { value: '1000' },
@@ -51,6 +80,8 @@ function createEditor(storage = {}) {
     elements,
     resetCalls,
     renderedRows,
+    logs,
+    fetchCalls,
     storage,
     attachedMap: {},
     localStorage: {
@@ -95,18 +126,315 @@ function createEditor(storage = {}) {
       elements['ss-home-mk'].textContent = value === 1 ? '1' : '0';
     },
     drawCanvas: () => {},
-    addLog: () => {},
-    fetch: async () => ({ ok: true }),
+    addLog: (...entry) => logs.push(entry),
+    fetch: async (...args) => { fetchCalls.push(args); return { ok: true, json: async () => ({ queued: 0 }) }; },
     esc: value => String(value),
     document: {
       getElementById: id => elements[id],
-      createElement: () => ({ dataset: {}, addEventListener() {} }),
+      createElement,
+      querySelectorAll: () => [],
     },
   });
   vm.runInContext(editor, context);
   vm.runInContext(html.match(/function esc\(s\)\{[^\r\n]+/)[0], context);
   return context;
 }
+
+test('control blocks have stable defaults and preserve an action when moved between slots', () => {
+  const editor = createEditor();
+  editor.addKbdStep();
+  const action = editor.steps[0];
+  const branch = editor.addIfElseBlock('door');
+  assert.equal(branch.type, 'if_else');
+  assert.equal(branch.condition_id, 'door');
+  assert.deepEqual(Array.from(branch.then_steps), []);
+  assert.deepEqual(Array.from(branch.else_steps), []);
+  editor.moveStepToSlot(action._id, branch._id, 'then_steps');
+  editor.addMseStep();
+  const second = editor.steps.at(-1);
+  editor.moveStepToSlot(second._id, branch._id, 'then_steps');
+  editor.moveStepToSlot(second._id, branch._id, 'then_steps', action._id);
+  assert.deepEqual(Array.from(branch.then_steps.map(step => step._id)), [second._id, action._id]);
+  editor.moveStepToSlot(action._id, branch._id, 'else_steps');
+  assert.equal(editor.steps[0], branch);
+  assert.equal(branch.then_steps[0], second);
+  assert.equal(branch.else_steps[0], action);
+  assert.equal(editor.findStepLocation(action._id).list, branch.else_steps);
+  assert.equal([branch, ...branch.then_steps, ...branch.else_steps].filter(step => step._id === action._id).length, 1);
+});
+
+test('script toolbar exposes controls for adding blank flow blocks', () => {
+  const toolbar = html.slice(html.indexOf('<div id="script-tb">'), html.indexOf('<div id="tbl-wrap">'));
+  assert.match(toolbar, /onclick="addIfElseBlock\(\)"/);
+  assert.match(toolbar, /onclick="addDoWhileBlock\(\)"/);
+});
+
+test('actions move between blocks and back to a requested top-level position', () => {
+  const editor = createEditor();
+  editor.addKbdStep();
+  const action = editor.steps[0];
+  editor.addMseStep();
+  const second = editor.steps[1];
+  const branch = editor.addIfElseBlock();
+  const repeat = editor.addDoWhileBlock();
+  assert.equal(repeat.repeat_when, 'match');
+  assert.equal(repeat.max_iterations, 10);
+  editor.moveStepToSlot(action._id, branch._id, 'then_steps');
+  editor.moveStepToSlot(action._id, repeat._id, 'steps');
+  editor.moveStepToTopLevel(action._id, branch._id);
+  assert.deepEqual(Array.from(editor.steps.map(step => step._id)), [second._id, action._id, branch._id, repeat._id]);
+  assert.equal(editor.findStepLocation(action._id).step, action);
+  assert.equal(editor.steps.flatMap(step => step.type === 'do_while' ? step.steps : []).filter(step => step._id === action._id).length, 0);
+});
+
+test('control nodes cannot be moved into a slot and invalid moves are reported', () => {
+  const editor = createEditor();
+  const outer = editor.addIfElseBlock();
+  const inner = editor.addDoWhileBlock();
+  const errors = [];
+  editor.addLog = (...args) => errors.push(args);
+  assert.equal(editor.moveStepToSlot(inner._id, outer._id, 'then_steps'), false);
+  assert.equal(editor.moveStepToSlot(9999, outer._id, 'then_steps'), false);
+  assert.equal(editor.moveStepToSlot(inner._id, outer._id, 'unknown'), false);
+  assert.equal(editor.moveStepToSlot(outer._id, outer._id, 'then_steps'), false);
+  assert.equal(editor.moveStepToTopLevel(9999), false);
+  assert.equal(editor.updStep(9999, 'angle', 10), false);
+  assert.equal(outer.then_steps.length, 0);
+  assert.equal(inner.steps.length, 0);
+  assert.equal(errors.length, 6);
+});
+
+test('block slots accept native drops and action rows drop back to the selected top-level position', () => {
+  const editor = createEditor();
+  editor.addKbdStep();
+  const action = editor.steps[0];
+  const block = editor.addIfElseBlock('old-condition');
+  const blockRow = editor.renderedRows.at(-1);
+  const panel = blockRow.children[0].children[0];
+  const slot = panel.children[0];
+  let stopped = false;
+  slot.dispatch('drop', {
+    preventDefault() {},
+    stopPropagation() { stopped = true; },
+    dataTransfer: { getData: () => String(action._id) },
+  });
+  assert.equal(stopped, true);
+  assert.equal(block.then_steps[0]._id, action._id);
+  editor.addKbdStep();
+  const second = editor.steps.at(-1);
+  editor.moveStepToSlot(second._id, block._id, 'then_steps');
+  const currentBlockRow = editor.renderedRows.find(row => row.children?.[0]?.children?.[0]?.className.includes('control-block'));
+  const slotBody = currentBlockRow.children[0].children[0].children[0].children[0].children[0];
+  const firstSlotRow = slotBody.children.find(row => String(row.dataset.stepId) === String(action._id));
+  firstSlotRow.dispatch('drop', {
+    preventDefault() {},
+    stopPropagation() {},
+    dataTransfer: { getData: () => String(second._id) },
+  });
+  assert.deepEqual(Array.from(block.then_steps.map(step => step._id)), [second._id, action._id]);
+  editor.addMseStep();
+  const mse = editor.steps.at(-1);
+  const targetRow = editor.renderedRows.find(row => String(row.dataset.stepId) === String(mse._id));
+  assert.ok(targetRow);
+  targetRow.dispatch('drop', {
+    preventDefault() {},
+    stopPropagation() {},
+    dataTransfer: { getData: () => String(action._id) },
+  });
+  assert.deepEqual(Array.from(editor.steps.map(step => step._id)), [block._id, action._id, mse._id]);
+  assert.deepEqual(Array.from(block.then_steps.map(step => step._id)), [second._id]);
+});
+
+test('block controls render escaped condition labels and editable repeat settings', () => {
+  const editor = createEditor();
+  editor.conditions = [{ condition_id: 'cond"value', name: '<img src=x>' }];
+  const block = editor.addDoWhileBlock('cond"value');
+  const row = editor.renderedRows.at(-1);
+  const markup = row.children[0].children[0].innerHTML;
+  assert.match(markup, /DO-WHILE/);
+  assert.match(markup, /MATCH/);
+  assert.match(markup, /NOT MATCH/);
+  assert.match(markup, /min="1" max="10000"/);
+  assert.match(markup, /value="cond&quot;value"/);
+  assert.match(markup, /&lt;img src=x&gt;/);
+  editor.updateControlBlock(block._id, 'repeat_when', 'not_match');
+  editor.updateControlBlock(block._id, 'max_iterations', '10000');
+  assert.equal(block.repeat_when, 'not_match');
+  assert.equal(block.max_iterations, 10000);
+});
+
+test('ordinary editors and OCR variables operate within the correct block scope', () => {
+  const editor = createEditor();
+  editor.addOcrStep({ roi: [0, 0, 1, 1], variable: 'branch_value' });
+  const branchOcr = editor.steps[0];
+  const branch = editor.addIfElseBlock('old-condition');
+  editor.moveStepToSlot(branchOcr._id, branch._id, 'then_steps');
+  editor.addOcrStep({ roi: [0, 0, 1, 1], variable: 'branch_value' });
+  const elseOcr = editor.steps.at(-1);
+  editor.moveStepToSlot(elseOcr._id, branch._id, 'else_steps');
+  editor.addKbdStep();
+  const inside = editor.steps.at(-1);
+  editor.updStepKbd(inside._id, 'TYPE');
+  editor.moveStepToSlot(inside._id, branch._id, 'then_steps');
+  assert.deepEqual(Array.from(editor.getOcrVariables(inside._id)), ['branch_value']);
+  editor.insertKbdVariable(inside._id, 'branch_value');
+  assert.equal(inside.text, '${branch_value}');
+  editor.updStep(inside._id, 'text', 'typed');
+  assert.equal(inside.text, 'typed');
+  editor.addKbdStep();
+  const afterIf = editor.steps.at(-1);
+  assert.deepEqual(Array.from(editor.getOcrVariables(afterIf._id)), ['branch_value']);
+  editor.delStep(branchOcr._id);
+  assert.equal(branch.then_steps.some(step => step._id === branchOcr._id), false);
+  assert.equal(branch.then_steps.some(step => step._id === inside._id), true);
+  const repeat = editor.addDoWhileBlock('old-condition');
+  editor.addOcrStep({ roi: [0, 0, 1, 1], variable: 'body_value' });
+  const bodyOcr = editor.steps.at(-1);
+  editor.moveStepToSlot(bodyOcr._id, repeat._id, 'steps');
+  editor.addKbdStep();
+  const afterBody = editor.steps.at(-1);
+  assert.deepEqual(Array.from(editor.getOcrVariables(afterBody._id)), ['body_value']);
+});
+
+test('mouse action editors resolve nested steps by identity', () => {
+  const editor = createEditor();
+  editor.addMseStep();
+  const mouse = editor.steps[0];
+  const block = editor.addDoWhileBlock('old-condition');
+  editor.moveStepToSlot(mouse._id, block._id, 'steps');
+  editor.updStepMse(mouse._id, 'CLICK');
+  editor.updStep(mouse._id, 'btn', 'R');
+  assert.equal(mouse.action, 'CLICK');
+  assert.equal(mouse.btn, 'R');
+  editor.addImageMoveStep({ template_b64: 'dGVzdA==', source_width: 640, source_height: 360 }, mouse._id);
+  assert.equal(editor.findStepLocation(mouse._id).step, mouse);
+  assert.equal(mouse.action, 'IMAGE_MOVE');
+  assert.equal(mouse.image_move.template_b64, 'dGVzdA==');
+});
+
+test('block deletion offers unwrap, delete-all, and cancel with order and identity preserved', () => {
+  const editor = createEditor();
+  editor.addKbdStep();
+  const first = editor.steps[0];
+  const block = editor.addIfElseBlock();
+  editor.addMseStep();
+  const last = editor.steps.at(-1);
+  editor.moveStepToSlot(first._id, block._id, 'then_steps');
+  editor.moveStepToSlot(last._id, block._id, 'else_steps');
+  editor.requestBlockDelete(block._id);
+  assert.equal(editor.elements['block-delete-dialog'].hidden, false);
+  assert.match(editor.elements['block-delete-dialog'].innerHTML, /Unwrap steps/);
+  assert.match(editor.elements['block-delete-dialog'].innerHTML, /Delete all/);
+  assert.match(editor.elements['block-delete-dialog'].innerHTML, /Cancel/);
+  editor.resolveBlockDelete('cancel');
+  assert.deepEqual(Array.from(editor.steps.map(step => step._id)), [block._id]);
+  editor.requestBlockDelete(block._id);
+  editor.resolveBlockDelete('unwrap');
+  assert.deepEqual(Array.from(editor.steps.map(step => step._id)), [first._id, last._id]);
+  editor.addIfElseBlock();
+  const deletedBlock = editor.steps.at(-1);
+  editor.addKbdStep();
+  const descendant = editor.steps.at(-1);
+  editor.moveStepToSlot(descendant._id, deletedBlock._id, 'then_steps');
+  editor.requestBlockDelete(deletedBlock._id);
+  editor.resolveBlockDelete('delete');
+  assert.equal(editor.steps.some(step => step._id === deletedBlock._id || step._id === descendant._id), false);
+});
+
+test('control-flow validation rejects empty blocks and invalid loop limits', () => {
+  const editor = createEditor();
+  const conditional = editor.addIfElseBlock('old-condition');
+  assert.throws(() => editor.validateControlFlowNodes(editor.steps), /at least one step/i);
+  conditional.then_steps.push({ type: 'kbd', _id: 100, delay_ms: 0, cmd_type: 'KEY', key: 'ENTER' });
+  assert.doesNotThrow(() => editor.validateControlFlowNodes(editor.steps));
+  const repeat = editor.addDoWhileBlock('old-condition');
+  assert.throws(() => editor.validateControlFlowNodes(editor.steps), /step/i);
+  repeat.steps.push({ type: 'kbd', _id: 101, delay_ms: 0, cmd_type: 'KEY', key: 'ENTER' });
+  for (const value of [0, 1.5, 10001, '10']) {
+    repeat.max_iterations = value;
+    assert.throws(() => editor.validateControlFlowNodes(editor.steps), /1 to 10000/i);
+  }
+  repeat.max_iterations = 10000;
+  assert.doesNotThrow(() => editor.validateControlFlowNodes(editor.steps));
+  repeat.repeat_when = 'sometimes';
+  assert.throws(() => editor.validateControlFlowNodes(editor.steps), /repeat direction/i);
+  repeat.repeat_when = 'match';
+  repeat.steps.length = 200;
+  assert.throws(() => editor.validateControlFlowNodes(editor.steps), /at most 200/i);
+  repeat.steps.length = 199;
+  assert.doesNotThrow(() => editor.validateControlFlowNodes(editor.steps));
+});
+
+test('nested script serialization strips editor IDs but preserves block children and order', () => {
+  const editor = createEditor();
+  editor.addKbdStep();
+  const action = editor.steps[0];
+  const branch = editor.addIfElseBlock('old-condition');
+  editor.moveStepToSlot(action._id, branch._id, 'else_steps');
+  const serialized = editor.serializeEditorSteps(editor.steps);
+  assert.deepEqual(JSON.parse(JSON.stringify(serialized)), [{
+    type: 'if_else', condition_id: 'old-condition', then_steps: [],
+    else_steps: [{ type: 'kbd', delay_ms: 1000, cmd_type: 'COMBO', mod1: 'CTRL', mod2: '', key: 'C' }],
+  }]);
+  assert.equal(serialized[0].else_steps[0]._id, undefined);
+});
+
+test('nested imported actions receive unique editor IDs and nested blocks are rejected', () => {
+  const editor = createEditor();
+  const imported = editor.normalizeImportedSteps([{
+    type: 'if_else', condition_id: 'old-condition',
+    then_steps: [{ type: 'kbd', cmd_type: 'KEY', key: 'ENTER' }],
+    else_steps: [{ type: 'mse', action: 'CLICK', btn: 'R' }],
+  }]);
+  editor.steps = editor.assignEditorStepIds(imported);
+  const block = editor.steps[0];
+  assert.notEqual(block._id, block.then_steps[0]._id);
+  assert.notEqual(block.then_steps[0]._id, block.else_steps[0]._id);
+  assert.equal(editor.findStepLocation(block.else_steps[0]._id).step.type, 'mse');
+  assert.throws(() => editor.normalizeImportedSteps([{
+    type: 'if_else', condition_id: 'old-condition',
+    then_steps: [{ type: 'do_while', condition_id: 'old-condition', steps: [] }],
+  }]), /cannot be nested/i);
+});
+
+test('RUN submits nested block steps in order without leaking editor IDs', async () => {
+  const editor = createEditor();
+  editor.addKbdStep();
+  const first = editor.steps[0];
+  editor.addIfElseBlock('old-condition');
+  const branch = editor.steps.at(-1);
+  editor.addKbdStep();
+  const thenAction = editor.steps.at(-1);
+  editor.addKbdStep();
+  const elseAction = editor.steps.at(-1);
+  editor.addDoWhileBlock('old-condition');
+  const repeat = editor.steps.at(-1);
+  editor.addKbdStep();
+  const bodyAction = editor.steps.at(-1);
+  editor.moveStepToSlot(thenAction._id, branch._id, 'then_steps');
+  editor.moveStepToSlot(elseAction._id, branch._id, 'else_steps');
+  editor.moveStepToSlot(bodyAction._id, repeat._id, 'steps');
+  editor.elements['script-name'].value = 'Nested';
+  vm.runInContext(html.slice(html.indexOf('async function runScript()'), html.indexOf('async function stopScript()')), editor);
+  await editor.runScript();
+  const payload = JSON.parse(editor.fetchCalls[0][1].body);
+  assert.equal(payload.steps[0].key, first.key);
+  assert.deepEqual(payload.steps[1].then_steps.map(step => step._id), [undefined]);
+  assert.deepEqual(payload.steps[1].else_steps.map(step => step._id), [undefined]);
+  assert.deepEqual(payload.steps[2].steps.map(step => step._id), [undefined]);
+  assert.equal(payload.steps[2].repeat_when, 'match');
+  assert.equal(payload.steps[2].max_iterations, 10);
+});
+
+test('RUN reports invalid blocks before making a request and keeps the draft', async () => {
+  const editor = createEditor();
+  const block = editor.addIfElseBlock('old-condition');
+  vm.runInContext(html.slice(html.indexOf('async function runScript()'), html.indexOf('async function stopScript()')), editor);
+  await editor.runScript();
+  assert.equal(editor.fetchCalls.length, 0);
+  assert.equal(editor.steps[0], block);
+  assert.match(editor.logs.at(-1)[1], /IF \/ ELSE needs at least one step/);
+});
 
 test('servo quick actions persist a fixed six-field snapshot and execute that snapshot', async () => {
   const storage = {};
@@ -352,7 +680,7 @@ test('invalid OCR ROI, name and timing cannot be added', () => {
   }
 });
 
-test('OCR ROI modal saves new steps and edits existing settings without changing delay', () => {
+test('OCR ROI modal saves new steps and edits nested settings without changing delay', () => {
   const editor = createEditor();
   editor.vcmRoi = [0.1, 0.2, 0.3, 0.4];
   editor.vcmOcrStepId = null;
@@ -365,13 +693,16 @@ test('OCR ROI modal saves new steps and edits existing settings without changing
   assert.equal(editor.steps[0].type, 'ocr');
   const id = editor.steps[0]._id;
   editor.steps[0].delay_ms = 123;
+  const block = editor.addIfElseBlock('old-condition');
+  editor.moveStepToSlot(id, block._id, 'then_steps');
   editor.vcmOcrStepId = id;
   editor.elements['vcm-name'].value = 'next_digits';
   editor.saveOcrSettings();
   assert.equal(editor.steps.length, 1);
-  assert.equal(editor.steps[0]._id, id);
-  assert.equal(editor.steps[0].delay_ms, 123);
-  assert.equal(editor.steps[0].variable, 'next_digits');
+  assert.equal(block.then_steps.length, 1);
+  assert.equal(block.then_steps[0]._id, id);
+  assert.equal(block.then_steps[0].delay_ms, 123);
+  assert.equal(block.then_steps[0].variable, 'next_digits');
 });
 
 test('imported OCR steps materialize defaults for variable selection and export', () => {
