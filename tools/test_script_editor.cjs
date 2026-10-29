@@ -65,6 +65,7 @@ function createEditor(storage = {}) {
     'script-resume-btn': { hidden: true, disabled: false },
     'script-pause-btn': { disabled: false },
     'runtime-pause-btn': { disabled: false },
+    'runtime-resume-btn': { disabled: false },
     'kb-lock-lbl': { style: {} },
     'kb-lock-msg': { style: {} },
     'sc-prog-step': { textContent: 'SRV 1/3' },
@@ -895,7 +896,7 @@ test('SNAP thumbnail and CON OCR MOV delete actions share one compact row withou
 
 test('architecture page covers recent script, visual, firmware and editor features', () => {
   const architecture = fs.readFileSync(path.join(__dirname, '../server/static/arch.html'), 'utf8');
-  for (const feature of ['fifo', 'clear', 'ocr', 'image-move', 'absolute-hid', 'editor', 'runtime-view']) {
+  for (const feature of ['fifo', 'clear', 'ocr', 'image-move', 'absolute-hid', 'editor', 'runtime-view', 'control-flow']) {
     assert.ok(architecture.includes(`data-feature="${feature}"`), `Architecture documents ${feature}`);
   }
   for (const term of ['TESSERACT_CMD', '${digits}', 'IMAGE_MOVE', 'MOUSE:ABS', 'ABS_RANGE=0..32767',
@@ -1145,4 +1146,74 @@ test('execution status formats active elapsed time as HH:MM:SS without wrapping 
   editor.renderRuntimeDetail({job_id:'elapsed-job',name:'Example',active:true,phase:'waiting',
     started_at:Date.now()/1000-65,iteration:0,conditions:[],steps:[]});
   assert.match(editor.elements['runtime-meta'].textContent,/elapsed \d{2}:\d{2}:\d{2}/);
+});
+
+test('runtime status renders control progress and selects only the immutable latest failure',()=>{
+  const editor=createEditor();
+  editor.fifoState={running:true,queued:0,paused:false,pause:null,waiting:null};
+  editor.setRuntimeSnapshot({
+    session_id:'control-session',revision:1,
+    active:{job_id:'active-job',name:'Active',phase:'running',total:3},
+    queued:[],
+    last_failure:{job_id:'failed-job',name:'Failed <script>',phase:'failed',total:1,error:'failure <unsafe>'},
+  });
+  editor.runtimeSelectedId='active-job';
+  editor.renderRuntimeDetail({
+    job_id:'active-job',name:'Active',active:true,phase:'running',current_step:0,
+    conditions:[],steps:[
+      {state:'active',params:{type:'if_else',condition_id:'door',
+        then_steps:[{type:'kbd',cmd_type:'TYPE',text:'safe <then>'}],
+        else_steps:[{type:'mse',action:'CLICK',btn:'L'}]},
+        control:{branch:'then',condition_match:true,iteration:null,iteration_limit:null},
+        children:{
+          then_steps:[{state:'active',result:{variable:'door',value:'open'},error:null}],
+          else_steps:[{state:'pending',result:null,error:null}],
+        }},
+      {state:'active',params:{type:'do_while',condition_id:'door',repeat_when:'match',max_iterations:10,
+        steps:[{type:'kbd',cmd_type:'KEY',key:'ENTER'}]},
+        control:{branch:null,condition_match:null,iteration:2,iteration_limit:10},
+        children:{steps:[{state:'active',result:null,error:null}]}},
+    ],
+  });
+  let markup=editor.elements['runtime-content'].innerHTML;
+  assert.ok(markup.includes('IF MATCH → THEN'));
+  assert.ok(markup.includes('DO-WHILE 2/10'));
+  assert.ok(markup.includes('safe &lt;then&gt;'));
+  assert.ok(markup.includes('data-runtime-child="then_steps" data-runtime-state="active"'));
+  assert.ok(markup.includes('data-runtime-child="else_steps" data-runtime-state="pending"'));
+  assert.ok(markup.includes('door = open'));
+  assert.ok(editor.elements['runtime-prog-step'].textContent.includes('THEN action 1 / 1'));
+  assert.ok(!/<input|<select|<button|draggable=/.test(markup));
+
+  editor.selectRuntimeJob('failed-job');
+  assert.equal(editor.runtimeSelectedId,'failed-job');
+  assert.equal(editor.runtimeFollow,false);
+  assert.ok(editor.elements['runtime-jobs'].innerHTML.includes('Failed: Failed &lt;script&gt;'));
+  assert.equal(editor.elements['runtime-pause-btn'].disabled,true);
+  assert.equal(editor.elements['runtime-resume-btn'].disabled,true);
+  editor.renderRuntimeDetail({
+    job_id:'failed-job',name:'Failed <script>',active:false,phase:'failed',error:'failure <unsafe>',
+    current_step:0,conditions:[],steps:[{
+      state:'failed',params:{type:'do_while',condition_id:'door',repeat_when:'match',max_iterations:2,
+        steps:[{type:'kbd',cmd_type:'TYPE',text:'immutable'}]},
+      control:{branch:null,condition_match:null,iteration:2,iteration_limit:2},
+      children:{steps:[{state:'failed',result:null,error:'child <failure>'}]},
+    }],
+  });
+  markup=editor.elements['runtime-content'].innerHTML;
+  assert.ok(editor.elements['runtime-meta'].textContent.includes('Latest failure'));
+  assert.ok(markup.includes('failure &lt;unsafe&gt;'));
+  assert.ok(markup.includes('child &lt;failure&gt;'));
+  assert.ok(markup.includes('immutable'));
+  assert.ok(!/<input|<select|<button|draggable=/.test(markup));
+  assert.ok(!markup.includes('data-runtime-state="active"'));
+
+  editor.setRuntimeSnapshot({
+    session_id:'control-session',revision:2,active:null,queued:[],
+    last_failure:{job_id:'failed-job',name:'Failed <script>',phase:'failed',total:1,error:'failure <unsafe>'},
+  });
+  assert.ok(editor.elements['runtime-jobs'].innerHTML.includes('Failed: Failed &lt;script&gt;'));
+  assert.ok(!editor.elements['runtime-jobs'].innerHTML.includes('active-job'));
+  editor.resetRuntimeView();
+  assert.ok(!editor.elements['runtime-jobs'].innerHTML.includes('failed-job'));
 });

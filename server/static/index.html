@@ -1163,7 +1163,7 @@ function setScriptPause(pause){
   const button=document.getElementById('script-resume-btn');
   if(button){button.hidden=!pause;button.disabled=!!pause?.resuming;}
   const runtimeRetry=document.getElementById('runtime-resume-btn');
-  if(runtimeRetry)runtimeRetry.disabled=!pause||!!pause.resuming;
+  if(runtimeRetry)runtimeRetry.disabled=runtimeFailureSelected()||!pause||!!pause.resuming;
   syncPauseControls();
   if(!pause)return;
   kbLocked=true;
@@ -1173,7 +1173,7 @@ function setScriptPause(pause){
 function syncPauseControls(){
   for(const id of ['script-pause-btn','runtime-pause-btn']){
     const button=document.getElementById(id);
-    if(button)button.disabled=!fifoState.running||!!scriptPauseState;
+    if(button)button.disabled=id==='runtime-pause-btn'&&runtimeFailureSelected()||!fifoState.running||!!scriptPauseState;
   }
 }
 async function pauseScript(){
@@ -1205,6 +1205,13 @@ async function resumeScript(){
 }
 
 function runtimeJobs(){return [...(runtimeState.active?[runtimeState.active]:[]),...(runtimeState.queued||[])];}
+function runtimeSelectableJobs(){
+  const jobs=runtimeJobs();
+  const failure=runtimeState.last_failure;
+  if(failure&&!jobs.some(job=>job.job_id===failure.job_id))jobs.push(failure);
+  return jobs;
+}
+function runtimeFailureSelected(){return !!runtimeState.last_failure&&runtimeSelectedId===runtimeState.last_failure.job_id;}
 function setScriptView(view){
   if(!['edit','runtime'].includes(view))return;
   scriptView=view;
@@ -1236,40 +1243,44 @@ function setRuntimeSnapshot(snapshot){
   }
   runtimeState=snapshot;
   renderFifoQueue();
-  const jobs=runtimeJobs();
-  if(runtimeFollow)runtimeSelectedId=snapshot.active?.job_id||jobs[0]?.job_id||null;
-  else if(!jobs.some(job=>job.job_id===runtimeSelectedId))runtimeSelectedId=jobs[0]?.job_id||null;
+  const jobs=runtimeJobs(),selectable=runtimeSelectableJobs();
+  if(runtimeFollow)runtimeSelectedId=snapshot.active?.job_id||jobs[0]?.job_id||snapshot.last_failure?.job_id||null;
+  else if(!selectable.some(job=>job.job_id===runtimeSelectedId))runtimeSelectedId=jobs[0]?.job_id||snapshot.last_failure?.job_id||null;
   renderRuntimeJobs();
   if(scriptView==='runtime')refreshRuntimeDetail();
   return true;
 }
 function resetRuntimeView(){
   runtimeDetailRequest++;if(runtimeDetailController)runtimeDetailController.abort();
-  runtimeState={...runtimeState,active:null,queued:[]};runtimeSelectedId=null;runtimeDetailJobId=null;
+  runtimeState={...runtimeState,active:null,queued:[],last_failure:null};runtimeSelectedId=null;runtimeDetailJobId=null;
   renderFifoQueue();
   renderRuntimeJobs();
 }
 function setRuntimeFollow(enabled){
   runtimeFollow=!!enabled;
-  if(runtimeFollow)runtimeSelectedId=runtimeState.active?.job_id||runtimeJobs()[0]?.job_id||null;
+  if(runtimeFollow)runtimeSelectedId=runtimeState.active?.job_id||runtimeJobs()[0]?.job_id||runtimeState.last_failure?.job_id||null;
   renderRuntimeJobs();if(scriptView==='runtime')refreshRuntimeDetail();
 }
 function selectRuntimeJob(jobId){
-  if(!runtimeJobs().some(job=>job.job_id===jobId))return;
+  if(!runtimeSelectableJobs().some(job=>job.job_id===jobId))return;
   runtimeSelectedId=jobId;runtimeFollow=false;
   renderRuntimeJobs();if(scriptView==='runtime')refreshRuntimeDetail();
 }
 function renderRuntimeJobs(){
   const select=document.getElementById('runtime-jobs'),meta=document.getElementById('runtime-meta');
   if(!select||!meta)return;
-  const jobs=runtimeJobs();
-  select.innerHTML=jobs.map(job=>`<option value="${esc(job.job_id)}"${job.job_id===runtimeSelectedId?' selected':''}>${esc((job.job_id===runtimeState.active?.job_id?'Active: ':'Queued: ')+(job.name||'#'+job.job_id.slice(0,8))+' | '+job.phase+' | '+job.total+' steps')}</option>`).join('');
+  const jobs=runtimeSelectableJobs(),failureId=runtimeState.last_failure?.job_id;
+  select.innerHTML=jobs.map(job=>`<option value="${esc(job.job_id)}"${job.job_id===runtimeSelectedId?' selected':''}>${esc((job.job_id===runtimeState.active?.job_id?'Active: ':job.job_id===failureId?'Failed: ':'Queued: ')+(job.name||'#'+job.job_id.slice(0,8))+' | '+job.phase+' | '+job.total+' steps')}</option>`).join('');
   const follow=document.getElementById('runtime-follow');if(follow)follow.checked=runtimeFollow;
   const selected=jobs.find(job=>job.job_id===runtimeSelectedId);
-  meta.textContent=selected?(selected.name||'#'+selected.job_id.slice(0,8))+' | '+selected.phase+' | '+selected.total+' steps':'No active or queued scripts';
+  const failed=selected&&selected.job_id===failureId;
+  meta.textContent=selected?(selected.name||'#'+selected.job_id.slice(0,8))+' | '+(failed?'Latest failure | ':'')+selected.phase+' | '+selected.total+' steps':'No active or queued scripts';
   if(selected&&runtimeDetailJobId!==selected.job_id)document.getElementById('runtime-content').innerHTML='<div class="cdim">Loading selected job...</div>';
   if(!selected)document.getElementById('runtime-content').innerHTML='<div class="cdim">No active or queued scripts</div>';
   if(!selected||runtimeDetailJobId!==selected.job_id)renderRuntimeProgress(null);
+  syncPauseControls();
+  const resume=document.getElementById('runtime-resume-btn');
+  if(resume)resume.disabled=runtimeFailureSelected()||!scriptPauseState||!!scriptPauseState.resuming;
 }
 function runtimeValue(value,label,width=null,text=false){
   return `<span class="runtime-value${text?' runtime-text':''}" title="${esc(label)}"${width?` style="width:${width}px"`:''}>${esc(value??'')}</span>`;
@@ -1305,12 +1316,52 @@ function runtimeTypeBadge(params){
   const color={srv:'b-srv',kbd:'b-kbd',mse:'b-mse',evt:'b-evt',img:'b-img',ocr:'b-img'}[type]||'b-evt';
   return `<span class="badge ${color}">${esc((type||'').toUpperCase())}</span>`;
 }
+function runtimeControlSummary(item){
+  const control=item.control||{},params=item.params||{};
+  if(params.type==='if_else'){
+    if(control.condition_match==null)return 'IF pending';
+    return `IF ${control.condition_match?'MATCH → THEN':'NO MATCH → ELSE'}`;
+  }
+  if(control.iteration==null)return 'DO-WHILE pending';
+  const repeat=params.repeat_when==='not_match'?'NO MATCH':'MATCH';
+  return `DO-WHILE ${control.iteration}/${control.iteration_limit} | repeat on ${repeat}`;
+}
+function runtimeControlRows(item){
+  const params=item.params||{},children=item.children||{};
+  const slots=params.type==='if_else'?['then_steps','else_steps']:['steps'];
+  const activeSlot=params.type==='if_else'?(item.control?.branch?item.control.branch+'_steps':null):'steps';
+  return slots.map(slot=>{
+    const actions=Array.isArray(params[slot])?params[slot]:[];
+    const states=Array.isArray(children[slot])?children[slot]:[];
+    const title=slot==='then_steps'?'THEN':slot==='else_steps'?'ELSE':'BODY';
+    const rows=actions.map((action,index)=>{
+      const state=states[index]||{state:'pending'};
+      const status=slot!==activeSlot&&state.state==='active'?'pending':state.state;
+      const row=`<tr data-runtime-child="${esc(slot)}" data-runtime-state="${esc(status)}"><td class="runtime-mark-cell"><span class="runtime-mark" title="${title} action ${index+1}: ${esc(status)}">${({active:'&#9654;',completed:'&#10003;',failed:'!',pending:'&#183;'})[status]||'&#183;'}</span></td><td>${runtimeTypeBadge(action)}</td><td>${runtimeValue(action.delay_ms??0,String(action.delay_ms??0)+'ms',38)}</td><td><div class="runtime-fields">${runtimeStepFields(action)}</div></td></tr>`;
+      const detail=(state.result!=null?`<div class="runtime-result">${esc(runtimeResultText(state.result))}</div>`:'')+(state.error?`<div class="cerr">${esc(state.error)}</div>`:'');
+      return row+(detail?`<tr data-runtime-child-detail="${esc(slot)}-${index}"><td colspan="4" class="runtime-detail-cell">${detail}</td></tr>`:'');
+    }).join('');
+    return `<tr class="runtime-control-slot"><td colspan="4"><strong>${title}</strong></td></tr>${rows||`<tr><td colspan="4" class="cdim">No submitted actions</td></tr>`}`;
+  }).join('');
+}
 function renderRuntimeProgress(detail){
   const label=document.getElementById('runtime-prog-lbl'),fill=document.getElementById('runtime-prog-fi'),step=document.getElementById('runtime-prog-step');
   if(!label||!fill||!step)return;
   const items=detail?.steps||[],done=items.filter(item=>['completed','failed'].includes(item.state)).length;
   label.textContent=done+' / '+items.length;fill.style.width=(items.length?Math.round(done/items.length*100):0)+'%';
-  step.textContent=detail?(Number.isInteger(detail.current_step)?'Step '+(detail.current_step+1)+' / '+items.length+' | ':'')+detail.phase:'';
+  const current=Number.isInteger(detail?.current_step)?items[detail.current_step]:null;
+  const control=current?.control||{},params=current?.params||{};
+  let childProgress='';
+  if(params.type==='if_else'&&control.branch){
+    const slot=control.branch+'_steps',children=current.children?.[slot]||[];
+    const activeIndex=children.findIndex(child=>child.state==='active');
+    if(activeIndex>=0)childProgress=' | '+control.branch.toUpperCase()+' action '+(activeIndex+1)+' / '+children.length;
+  }else if(params.type==='do_while'){
+    const children=current.children?.steps||[];
+    const activeIndex=children.findIndex(child=>child.state==='active');
+    if(activeIndex>=0)childProgress=' | BODY action '+(activeIndex+1)+' / '+children.length;
+  }
+  step.textContent=detail?(Number.isInteger(detail.current_step)?'Step '+(detail.current_step+1)+' / '+items.length:'')+childProgress+(childProgress?' | ':' | ')+detail.phase:'';
   step.title=step.textContent;
 }
 function runtimeStepText(params){
@@ -1357,7 +1408,8 @@ function renderRuntimeDetail(detail){
   runtimeDetailJobId=detail.job_id;
   const remaining=detail.phase==='waiting'?' | no timeout':detail.remaining_ms==null?'':` | ${Math.ceil(detail.remaining_ms/1000)}s remaining`;
   const elapsed=detail.active&&Number.isFinite(detail.started_at)?` | elapsed ${formatElapsed(detail.started_at)}`:'';
-  document.getElementById('runtime-meta').textContent=(detail.name||'#'+detail.job_id.slice(0,8))+' | '+(detail.active?'Active':'Queued preview')+' | '+detail.phase+' | iteration '+((detail.iteration||0)+1)+remaining+elapsed;
+  const failure=detail.job_id===runtimeState.last_failure?.job_id;
+  document.getElementById('runtime-meta').textContent=(detail.name||'#'+detail.job_id.slice(0,8))+' | '+(failure?'Latest failure':detail.active?'Active':'Queued preview')+' | '+detail.phase+' | iteration '+((detail.iteration||0)+1)+remaining+elapsed;
   const items=detail.steps||[];
   const currentIndex=detail.active?(Number.isInteger(detail.current_step)?detail.current_step:items.findIndex(item=>item.state==='active')):-1;
   const expected=detail.pause?.evt||items[currentIndex]?.params?.evt||'';
@@ -1370,6 +1422,10 @@ function renderRuntimeDetail(detail){
   }).join('');
   const marks={active:'&#9654;',completed:'&#10003;',failed:'!',pending:'&#183;'};
   const rows=items.map((step,index)=>{
+    if(step.params.type==='if_else'||step.params.type==='do_while'){
+      const summary=runtimeControlSummary(step);
+      return `<tr data-runtime-state="${esc(step.state)}"${index===currentIndex?' aria-current="step"':''}><td class="runtime-mark-cell"><span class="runtime-mark" title="Step ${index+1}: ${esc(step.state)}">${marks[step.state]||'&#183;'}</span></td><td><span class="badge b-evt">${step.params.type==='if_else'?'IF / ELSE':'DO-WHILE'}</span></td><td>${runtimeValue(step.params.delay_ms??0,String(step.params.delay_ms??0)+'ms',38)}</td><td><strong>${esc(summary)}</strong> | Condition ${runtimeValue(step.params.condition_id||'','Condition',null,true)}</td></tr>${runtimeControlRows(step)}`;
+    }
     const row=`<tr data-runtime-state="${esc(step.state)}"${index===currentIndex?' aria-current="step"':''}><td class="runtime-mark-cell"><span class="runtime-mark" title="Step ${index+1}: ${esc(step.state)}">${marks[step.state]||'&#183;'}</span></td><td>${runtimeTypeBadge(step.params)}</td><td>${runtimeValue(step.params.delay_ms??0,String(step.params.delay_ms??0)+'ms',38)}</td><td><div class="runtime-fields">${runtimeStepFields(step.params)}</div></td></tr>`;
     if(index!==currentIndex)return row;
     let expanded=detail.pause?`<div class="cerr">${esc(detail.pause.message||'Manually paused')}</div>`:'';
@@ -1380,7 +1436,8 @@ function renderRuntimeDetail(detail){
     expanded+=conditions;
     return row+(expanded?`<tr data-runtime-detail="${index}"><td colspan="4" class="runtime-detail-cell">${expanded}</td></tr>`:'');
   }).join('');
-  content.innerHTML=`<table class="stbl runtime-steps"><thead><tr><th style="width:14px"></th><th style="width:48px">TYPE</th><th style="width:52px">DELAY</th><th>PARAMS</th></tr></thead><tbody>${rows}</tbody></table>`;
+  const error=detail.error?`<div class="cerr runtime-job-error">${esc(detail.error)}</div>`:'';
+  content.innerHTML=`${error}<table class="stbl runtime-steps"><thead><tr><th style="width:14px"></th><th style="width:48px">TYPE</th><th style="width:52px">DELAY</th><th>PARAMS</th></tr></thead><tbody>${rows}</tbody></table>`;
   renderRuntimeProgress(detail);
 }
 async function refreshRuntimeDetail(){
