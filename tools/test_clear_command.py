@@ -1143,7 +1143,8 @@ class ClearCommandTests(unittest.IsolatedAsyncioTestCase):
             seen.append(condition_id)
 
         self.kbm_broadcast.side_effect = broadcast
-        with patch.object(main.kb_serial, "send", return_value="OK") as send:
+        with patch.object(main.kb_serial, "send", return_value="OK") as send, \
+             patch.object(main, "_script_sleep", new_callable=AsyncMock):
             await asyncio.wait_for(main._script_runner(), timeout=5)
         self.assertEqual(seen, expected)
         self.assertEqual(send.call_count, 2)
