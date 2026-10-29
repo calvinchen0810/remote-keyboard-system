@@ -63,3 +63,67 @@ The final count run used `unittest` discovery wrappers to suppress application l
 - `git diff --check` reported no whitespace errors.
 
 The passing clear suite emits expected exception logs for mocked persistence failures; it also reports two skipped tests. The dedicated limit-failure test logs its expected runner exception.
+
+## Review correction — stale do-while job error (2026-10-29)
+
+- Confirmed `complete_child_step(error=...)` sets child, parent, and job errors; non-fatal keyboard/servo failures can continue into another do-while body iteration. Previously, `set_control_state(iteration=...)` reset only the parent/children, leaving the job summary inconsistent.
+- The iteration reset now reconciles the job error only when it matches the parent error being cleared. It falls back to the last remaining top-level step error, or `None` when none remains. A different job error remains untouched; unrelated step errors survive even when their message equals the cleared child error.
+- Extended the existing iteration-reset regression to assert parent state/error and job detail/status error. Added preservation coverage for unrelated errors recorded before/after the child failure, with different and identical messages. No runner behavior or public runtime schema changed.
+
+### RED — original stale-error regression
+
+From `C:\GitHub\remote-keyboard-system.worktrees\a`:
+
+```text
+& 'C:\GitHub\remote-keyboard-system\server\env\Scripts\python.exe' -m unittest discover -s tools -p test_script_runtime.py -v
+
+FAIL: test_control_iteration_resets_child_states_and_failure_is_identified
+  self.assertIsNone(detail["error"])
+AssertionError: 'KBD ACK: ERROR' is not None
+Ran 9 tests in 0.013s
+FAILED (failures=1)
+Exit code: 1
+```
+
+### Additional RED — unrelated errors must not be erased
+
+A preliminary match-and-clear implementation fixed the stale error but failed the expanded unrelated-error regression:
+
+```text
+& 'C:\GitHub\remote-keyboard-system\server\env\Scripts\python.exe' -m unittest discover -s tools -p test_script_runtime.py -v
+
+FAIL: test_control_iteration_preserves_unrelated_job_error
+  (error='unrelated failure', unrelated_first=True)
+AssertionError: None != 'unrelated failure'
+FAIL: test_control_iteration_preserves_unrelated_job_error
+  (error='child failure', unrelated_first=True)
+AssertionError: None != 'child failure'
+FAIL: test_control_iteration_preserves_unrelated_job_error
+  (error='child failure', unrelated_first=False)
+AssertionError: None != 'child failure'
+Ran 9 tests in 0.016s
+FAILED (failures=3)
+Exit code: 1
+```
+
+### GREEN — runtime and control-flow suites
+
+After adding the remaining-step-error fallback:
+
+```text
+& 'C:\GitHub\remote-keyboard-system\server\env\Scripts\python.exe' -m unittest discover -s tools -p test_script_runtime.py -v
+
+test_control_iteration_preserves_unrelated_job_error ... ok
+test_control_iteration_resets_child_states_and_failure_is_identified ... ok
+Ran 9 tests in 0.010s
+OK
+Exit code: 0
+
+& 'C:\GitHub\remote-keyboard-system\server\env\Scripts\python.exe' -m unittest discover -s tools -p test_script_control_flow.py -v
+
+Ran 31 tests in 2.622s
+OK
+Exit code: 0
+```
+
+The control-flow suite emitted expected logs for mocked keyboard BUSY, visual reset failure, and iteration-limit failure. Self-review confirmed that ordinary step error recording, global iteration reset, child reset, and retained failure behavior remain unchanged; `git diff --check` passed.

@@ -106,6 +106,10 @@ class ScriptRuntime:
         if iteration is not None:
             control["iteration"] = iteration
             item["state"] = "active"
+            if job["error"] == item["error"]:
+                job["error"] = next(
+                    (step["error"] for step in reversed(job["steps"])
+                     if step is not item and step["error"] is not None), None)
             item["error"] = None
             for children in item.get("children", {}).values():
                 for child in children:

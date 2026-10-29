@@ -109,13 +109,45 @@ class ScriptRuntimeTests(unittest.TestCase):
         self.assertEqual(failed_item["children"]["steps"][0]["state"], "failed")
         self.assertEqual(failed_item["children"]["steps"][0]["error"], "KBD ACK: ERROR")
         self.assertEqual(failed_item["error"], "KBD ACK: ERROR")
+        self.assertEqual(runtime.detail(job_id)["error"], "KBD ACK: ERROR")
 
         runtime.set_control_state(0, iteration=2, iteration_limit=2)
-        item = runtime.detail(job_id)["steps"][0]
+        detail = runtime.detail(job_id)
+        item = detail["steps"][0]
         self.assertEqual(item["control"]["iteration"], 2)
         self.assertEqual(item["control"]["iteration_limit"], 2)
+        self.assertEqual(item["state"], "active")
+        self.assertIsNone(item["error"])
         self.assertEqual(item["children"]["steps"][0]["state"], "pending")
         self.assertIsNone(item["children"]["steps"][0]["error"])
+        self.assertIsNone(detail["error"])
+        self.assertIsNone(runtime.snapshot()["active"]["error"])
+
+    def test_control_iteration_preserves_unrelated_job_error(self):
+        for unrelated_error in ("unrelated failure", "child failure"):
+            for unrelated_first in (True, False):
+                with self.subTest(error=unrelated_error, unrelated_first=unrelated_first):
+                    runtime = ScriptRuntime()
+                    job_id = runtime.enqueue(name="A", steps=[{"type": "kbd"}, {
+                        "type": "do_while", "steps": [{"type": "kbd"}],
+                    }], loop=False, condition_ids=[])
+                    runtime.activate(job_id)
+                    if unrelated_first:
+                        runtime.start_step(0)
+                        runtime.note_error(unrelated_error)
+                    runtime.set_control_state(1, iteration=1)
+                    runtime.complete_child_step(1, "steps", 0, error="child failure")
+                    if not unrelated_first:
+                        runtime.start_step(0)
+                        runtime.note_error(unrelated_error)
+
+                    runtime.set_control_state(1, iteration=2)
+
+                    detail = runtime.detail(job_id)
+                    self.assertIsNone(detail["steps"][1]["error"])
+                    self.assertEqual(detail["steps"][0]["error"], unrelated_error)
+                    self.assertEqual(detail["error"], unrelated_error)
+                    self.assertEqual(runtime.snapshot()["active"]["error"], unrelated_error)
 
     def test_runtime_retains_only_the_latest_failed_job(self):
         runtime = ScriptRuntime()
