@@ -1840,7 +1840,10 @@ async def _submit_script(payload: dict):
         }
 
     req = MixedScriptRequest.model_validate(payload)
-    req = _normalize_script_request(req)
+    try:
+        req = _normalize_script_request(req)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
     try:
         servo_ids = [int(servo_id) for servo_id in req.servos]

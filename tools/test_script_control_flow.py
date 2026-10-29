@@ -1,8 +1,13 @@
+import asyncio
+import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
 from pydantic import ValidationError
+from starlette.requests import Request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 import main
@@ -138,6 +143,66 @@ class ScriptControlFlowValidationTests(unittest.TestCase):
         normalized = main._normalize_script_request(request)
 
         self.assertEqual(len(list(main._iter_action_steps(normalized.steps))), 200)
+
+
+class ScriptControlFlowSubmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.activate = AsyncMock(return_value=1)
+        for owner, attribute, replacement in [
+            (main, "_activate_script", self.activate),
+            (main, "_notify_pool_snapshot", AsyncMock()),
+            (main, "_script_control_lock", asyncio.Lock()),
+            (main, "_script_queue", asyncio.Queue()),
+            (main, "_script_runner_task", None),
+            (main.event_bus, "clear", AsyncMock()),
+        ]:
+            patcher = patch.object(owner, attribute, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def payload(self, slot, count):
+        actions = [{"type": "kbd", "evt": "READY"}] * count
+        if slot == "top":
+            steps = actions
+        elif slot == "body":
+            steps = [{"type": "do_while", "condition_id": "door",
+                      "repeat_when": "match", "steps": actions}]
+        else:
+            steps = [{"type": "if_else", "condition_id": "door",
+                      "then_steps": actions if slot == "then" else [],
+                      "else_steps": actions if slot == "else" else []}]
+        return {"steps": steps}
+
+    async def post(self, payload):
+        async def receive():
+            return {"type": "http.request", "body": json.dumps(payload).encode(),
+                    "more_body": False}
+
+        return await main.script_run(Request({
+            "type": "http", "method": "POST", "path": "/script/run",
+            "headers": [(b"x-rks-source", b"script-editor")],
+        }, receive))
+
+    async def test_expanded_scripts_over_200_return_422_before_enqueue(self):
+        for slot in ("top", "then", "else", "body"):
+            with self.subTest(slot=slot):
+                with self.assertRaises(HTTPException) as raised:
+                    await self.post(self.payload(slot, 101))
+                self.assertEqual(raised.exception.status_code, 422)
+                self.assertIn("at most 200 action steps", str(raised.exception.detail))
+                self.activate.assert_not_awaited()
+                main.event_bus.clear.assert_not_awaited()
+                self.assertTrue(main._script_queue.empty())
+
+    async def test_expanded_scripts_with_exactly_200_actions_can_enqueue(self):
+        for slot in ("top", "then", "else", "body"):
+            with self.subTest(slot=slot):
+                self.activate.reset_mock()
+                result = await self.post(self.payload(slot, 100))
+                self.assertTrue(result["ok"])
+                self.activate.assert_awaited_once()
+                request = self.activate.await_args.args[0]
+                self.assertEqual(len(list(main._iter_action_steps(request.steps))), 200)
 
 
 if __name__ == "__main__":
