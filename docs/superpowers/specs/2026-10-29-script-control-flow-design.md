@@ -82,9 +82,9 @@ The existing 200-step maximum applies to the total number of ordinary action ste
 
 ### Condition evaluation
 
-When execution reaches an if/else block, the server waits for a new camera frame and performs one comparison using the selected Condition's snapshot, ROI, and threshold. A match runs `then_steps`; a non-match runs `else_steps`.
+When execution reaches an if/else block, the server waits up to 5 seconds for a new camera frame and performs one comparison using the selected Condition's snapshot, ROI, and threshold. A match runs `then_steps`; a non-match runs `else_steps`. If no new frame arrives before the deadline, the job fails with an explicit camera-frame timeout.
 
-The do-while body runs at least once. After each completed body iteration, the server evaluates the selected Condition against a new frame. `repeat_when` determines whether a match or a non-match starts another iteration. The Condition's `min_hits` and cooldown are not applied to these single-frame control decisions; they continue to apply to the existing event-driven visual-monitor behavior.
+The do-while body runs at least once. After each completed body iteration, the server waits up to 5 seconds for a new frame and evaluates the selected Condition. `repeat_when` determines whether a match or a non-match starts another iteration. The Condition's `min_hits` and cooldown are not applied to these single-frame control decisions; they continue to apply to the existing event-driven visual-monitor behavior. If no new frame arrives before the deadline, the job fails with an explicit camera-frame timeout.
 
 The implementation must not substitute a prior `IMG.MATCH` event or cached score for a block decision. A missing camera frame, deleted Condition, or missing Condition snapshot is surfaced as an explicit execution/submission error; it must not silently choose a branch.
 
@@ -129,7 +129,7 @@ Focused automated tests cover:
 - Import/export round-trips for structured blocks and image bundles, including Condition/Snapshot ID remapping.
 - Legacy flat-script import and `/script/run` compatibility.
 - Request validation for unknown/missing conditions, nested blocks, empty slots, invalid iteration values, and the 200-action-step aggregate limit.
-- If/else match and non-match behavior using fresh frames.
+- If/else match and non-match behavior using fresh frames, plus the 5-second no-new-frame timeout.
 - Do-while's at-least-once behavior, both repeat directions, normal exit, and failure when the limit is reached while repetition is still required.
 - Execution Status branch/iteration details and explicit runtime failures, including retention of only the latest failed job until it is replaced or cleared.
 - PAUSE / RESUME / STOP and FIFO ordering while a block is active.
