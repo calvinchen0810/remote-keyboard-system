@@ -1314,7 +1314,7 @@ def _collect_condition_ids(steps: Sequence[ScriptNode]) -> list[str]:
             node_steps = [node]
         for step in node_steps:
             evt = EventBus._normalize((step.evt or "").strip())
-            if step.type == "evt" and evt.startswith("IMG.MATCH."):
+            if evt.startswith("IMG.MATCH."):
                 condition_ids.append(evt[len("IMG.MATCH."):])
     return list(dict.fromkeys(condition_ids))
 
@@ -2221,7 +2221,7 @@ def _remap_imported_node(node: dict[str, Any], condition_map: dict[str, str]) ->
         result["steps"] = [
             _remap_imported_node(child, condition_map) for child in result.get("steps", [])
         ]
-    elif node_type == "evt":
+    else:
         event_name = EventBus._normalize(result.get("evt") or "")
         if event_name.startswith("IMG.MATCH."):
             old_condition_id = event_name[len("IMG.MATCH."):]

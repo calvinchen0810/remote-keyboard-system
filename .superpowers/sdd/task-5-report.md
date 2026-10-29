@@ -462,3 +462,53 @@ OK
 - Existing flat-step import/export behavior and action ordering remain covered by editor/control-flow/runtime tests. Control blocks remain non-nestable.
 - No plan or ledger files were edited. `git diff --check` is run before commit.
 - The supplied `server\env\Scripts\python.exe` path was initially absent; a temporary local virtual environment was created from `server\requirements.txt` to run the requested Python suites and removed after verification.
+
+## Review follow-up: legacy action IMG gates (2026-10-29)
+
+### Cause and surgical correction
+
+Bundle reference validation and remapping run before `_normalize_script_request`.
+Both helpers only recognized standalone `type: "evt"` nodes, so legacy ordinary
+actions with an `evt: "IMG.MATCH.<old>"` gate escaped validation and retained an
+invalid old Condition ID. `_collect_condition_ids` now considers every ordinary
+action's gate; `_remap_imported_node` remaps IMG gates on every ordinary leaf.
+Control recursion and later normalization are unchanged. Only the matching `evt`
+field changes; other action fields and non-IMG events remain untouched.
+
+### RED evidence
+
+Command:
+```powershell
+& 'C:\GitHub\remote-keyboard-system\server\env\Scripts\python.exe' -m unittest discover -s tools -p test_script_control_flow.py -k legacy -v
+```
+
+Before the production fix: **3 tests, 12 subtest failures, exit 1**.
+Each regression exercised top-level, IF then, IF else, and do-while body gates:
+
+- Collection returned `[]` instead of `['old']` at top level, and `['control']`
+  instead of `['control', 'old']` in each slot.
+- Valid imports retained `" EVT: IMG.MATCH.old "` instead of `"IMG.MATCH.new-old"`.
+- Missing legacy gate references did not raise `HTTPException`.
+
+### GREEN evidence
+
+All commands used the existing interpreter above; no environment or dependencies
+were created or installed for this follow-up.
+
+```powershell
+& 'C:\GitHub\remote-keyboard-system\server\env\Scripts\python.exe' -m unittest discover -s tools -p test_script_control_flow.py -v
+# Ran 39 tests; OK; exit 0
+& 'C:\GitHub\remote-keyboard-system\server\env\Scripts\python.exe' -m unittest discover -s tools -p test_script_runtime.py -v
+# Ran 9 tests; OK; exit 0
+node --test tools\test_script_editor.cjs
+# tests 59; pass 59; fail 0; exit 0
+git diff --check
+# No whitespace errors; exit 0
+```
+
+The new tests also prove EVT-prefix/whitespace handling, preservation of ordinary
+fields (including IMG-looking command text), unchanged non-IMG events, no mutation
+of the input request, normal legacy gate splitting after remapping, and explicit
+422 rejection of missing bundle Conditions before camera/pool/broadcast effects.
+Direct self-review confirmed the fix changes only the two restrictive type guards;
+all allowed control slots continue using the existing traversal.

@@ -474,6 +474,100 @@ class ScriptControlFlowSubmissionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ScriptBundleImportTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def legacy_gate_steps(slot, gate):
+        if slot == "top":
+            return [gate]
+        if slot == "steps":
+            return [{"type": "do_while", "condition_id": "control",
+                     "repeat_when": "match", "steps": [gate]}]
+        return [{"type": "if_else", "condition_id": "control",
+                 "then_steps": [gate] if slot == "then_steps" else [],
+                 "else_steps": [gate] if slot == "else_steps" else []}]
+
+    def test_collects_legacy_image_gates_in_every_allowed_slot(self):
+        for slot in ("top", "then_steps", "else_steps", "steps"):
+            with self.subTest(slot=slot):
+                request = main.MixedScriptRequest.model_validate({
+                    "steps": self.legacy_gate_steps(
+                        slot, {"type": "kbd", "evt": " EVT: IMG.MATCH.old "}),
+                })
+                self.assertEqual(main._collect_condition_ids(request.steps),
+                                 ["old"] if slot == "top" else ["control", "old"])
+
+    async def test_import_remaps_legacy_image_gates_before_normalization(self):
+        for slot in ("top", "then_steps", "else_steps", "steps"):
+            with self.subTest(slot=slot):
+                request = main.ScriptBundleImportRequest.model_validate({
+                    "steps": self.legacy_gate_steps(slot, {
+                        "type": "kbd", "evt": " EVT: IMG.MATCH.old ",
+                        "cmd": "TYPE:IMG.MATCH.old", "text": "old", "delay_ms": 37,
+                    }) + [{"type": "kbd", "evt": " EVT: READY ", "text": "old"}],
+                    "img_bundle": {
+                        "snapshots": [{"snapshot_id": "snapshot", "jpeg_b64": "c25hcA=="}],
+                        "conditions": [
+                            {"condition_id": cid, "name": cid, "snapshot_id": "snapshot",
+                             "roi": [0, 0, 1, 1]} for cid in ("old", "control")
+                        ],
+                    },
+                })
+                original = request.model_dump()
+                camera = Mock()
+                camera.isOpened.return_value = True
+                with patch.object(main, "camera", camera), \
+                     patch.object(main.snapshot_pool, "add_b64", return_value={"id": "new-snapshot"}), \
+                     patch.object(main.condition_manager, "add",
+                                  side_effect=["new-old", "new-control"]), \
+                     patch.object(main.srv_ws, "broadcast", new_callable=AsyncMock):
+                    result = await main._import_script_bundle(request)
+
+                expected = request.steps[0].model_dump()
+                if slot != "top":
+                    expected["condition_id"] = "new-control"
+                gate = expected if slot == "top" else expected[slot][0]
+                gate["evt"] = "IMG.MATCH.new-old"
+                self.assertEqual(result["steps"], [expected, request.steps[1].model_dump()])
+                self.assertEqual(request.model_dump(), original)
+
+                normalized = main._normalize_script_request(
+                    main.MixedScriptRequest.model_validate({"steps": result["steps"]}))
+                actions = list(main._iter_action_steps(normalized.steps))
+                self.assertEqual([step.type for step in actions], ["evt", "kbd", "evt", "kbd"])
+                self.assertEqual(actions[0].evt, "IMG.MATCH.new-old")
+                self.assertEqual(actions[1].model_dump(), {**gate, "evt": None})
+                self.assertEqual(actions[2].evt, "READY")
+
+    async def test_import_rejects_missing_legacy_gate_reference_before_side_effects(self):
+        for slot in ("top", "then_steps", "else_steps", "steps"):
+            with self.subTest(slot=slot):
+                request = main.ScriptBundleImportRequest.model_validate({
+                    "steps": self.legacy_gate_steps(
+                        slot, {"type": "kbd", "evt": " EVT: IMG.MATCH.missing "}),
+                    "img_bundle": {
+                        "snapshots": [{"snapshot_id": "snapshot", "jpeg_b64": "c25hcA=="}],
+                        "conditions": [
+                            {"condition_id": "control", "name": "Control",
+                             "snapshot_id": "snapshot", "roi": [0, 0, 1, 1]},
+                        ],
+                    },
+                })
+                camera = Mock()
+                camera.isOpened.return_value = True
+                with patch.object(main, "camera", camera), \
+                     patch.object(main, "_open_camera") as open_camera, \
+                     patch.object(main.snapshot_pool, "add_b64") as add_snapshot, \
+                     patch.object(main.condition_manager, "add") as add_condition, \
+                     patch.object(main.srv_ws, "broadcast", new_callable=AsyncMock) as broadcast:
+                    with self.assertRaises(HTTPException) as raised:
+                        await main._import_script_bundle(request)
+                self.assertEqual(raised.exception.status_code, 422)
+                self.assertIn("Missing bundle Condition payload", raised.exception.detail)
+                self.assertIn("missing", raised.exception.detail)
+                open_camera.assert_not_called()
+                add_snapshot.assert_not_called()
+                add_condition.assert_not_called()
+                broadcast.assert_not_awaited()
+
     async def test_import_remaps_block_conditions_and_nested_image_events(self):
         request = main.ScriptBundleImportRequest.model_validate({
             "steps": [
