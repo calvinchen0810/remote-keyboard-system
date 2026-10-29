@@ -1552,9 +1552,165 @@ async def _run_image_move(config: ImageMoveConfig) -> ImageMatch:
     return result
 
 
+async def _run_action_step(step: MixedStep, *, top_index, variables, slot=None, child_index=None):
+    runtime = script_runtime
+    active = runtime.detail(runtime.active_id) if runtime.active_id else None
+    total = len(active["steps"]) if active is not None else top_index + 1
+    phase = "delay" if step.delay_ms > 0 and step.type != "evt" else "running"
+    if slot is None:
+        runtime.start_step(top_index, phase)
+    else:
+        runtime.start_child_step(top_index, slot, child_index, phase)
+    await _notify_runtime()
+    await kbm_ws.broadcast({
+        "type": "script_progress",
+        "step": top_index,
+        "total": total,
+        "step_type": step.type,
+        "iteration": active["iteration"] if active is not None else 0,
+    })
+    srv_ws.broadcast_sync({
+        "type": "status",
+        "state": "running",
+        "step": top_index,
+        "total": total,
+    })
+
+    def note_action_error(message):
+        if slot is None:
+            runtime.note_error(message)
+        else:
+            runtime.complete_child_step(
+                top_index, slot, child_index,
+                error=f"{slot}[{child_index}]: {message}")
+
+    step_result = None
+    try:
+        await _await_script_resume()
+        if step.type == "evt":
+            logger.info(f"[STEP {top_index+1}/{total}] EVT wait: {step.evt}")
+            ok_evt = await _wait_for_step_event(step, top_index, total)
+            await _await_script_resume()
+            if not ok_evt:
+                return
+
+        if step.delay_ms > 0:
+            await _script_sleep(step.delay_ms / 1000)
+
+        if step.type == "evt":
+            await _await_script_resume()
+            if slot is None:
+                runtime.complete_step(top_index)
+            else:
+                runtime.complete_child_step(top_index, slot, child_index)
+            await _notify_runtime()
+            return
+
+        if step.type == "ocr":
+            runtime.set_phase("recognizing", deadline=time.time() + step.timeout_ms / 1000)
+            await _notify_runtime()
+            await _await_script_resume()
+            variables.pop(step.variable, None)
+            config = OcrConfig.model_validate(step.model_dump())
+            variables[step.variable] = await read_stable_digits(config, frame_buffer)
+            await _await_script_resume()
+            step_result = {"variable": step.variable, "value": variables[step.variable]}
+            await kbm_ws.broadcast({"type": "ocr_result", "step": top_index,
+                                    "variable": step.variable, "value": variables[step.variable]})
+
+        elif step.type == "srv":
+            runtime.set_phase("running")
+            await _notify_runtime()
+            await _await_script_resume()
+            params = {
+                "delay_ms": 0,
+                "servo_id": step.servo_id or 1,
+                "angle": step.angle if step.angle is not None else 90,
+                "speed": step.speed or 60,
+                "duration_ms": step.duration_ms if step.duration_ms is not None else 300,
+                "home": step.home if step.home is not None else 1,
+            }
+            logger.info(
+                f"[STEP {top_index+1}/{total}] SRV sid={params['servo_id']} angle={params['angle']} "
+                f"speed={params['speed']} duration={params['duration_ms']}ms"
+            )
+            loop = asyncio.get_event_loop()
+            ok = await loop.run_in_executor(
+                executor, lambda p=params: srv_serial.send_command(p)
+            )
+            hold = step.duration_ms or 300
+            angle = step.angle or 90
+            wait_s = hold / 1000 + angle * 0.01 + 0.25
+            await _script_sleep(wait_s)
+            if not ok:
+                message = f"SRV step {top_index} failed"
+                note_action_error(message)
+                logger.warning(f"[STEP {top_index+1}/{total}] SRV failed")
+                await kbm_ws.broadcast({
+                    "type": "script_error",
+                    "step": top_index,
+                    "message": message,
+                })
+
+        elif step.type == "kbd":
+            runtime.set_phase("running")
+            await _notify_runtime()
+            cmd = _resolve_kbd_cmd(step, variables)
+            logger.info(f"[STEP {top_index+1}/{total}] KBD {cmd}")
+            result = await _send_kbm_command(cmd)
+            if result != "OK":
+                message = f"KBD ACK: {result}"
+                note_action_error(message)
+                logger.warning(f"[STEP {top_index+1}/{total}] KBD ACK={result} cmd={cmd}")
+                await kbm_ws.broadcast({
+                    "type": "script_error",
+                    "step": top_index,
+                    "message": f"KBD step {top_index} ACK: {result} cmd: {cmd}",
+                })
+
+        elif step.type == "mse":
+            if (step.action or "").upper() == "IMAGE_MOVE":
+                runtime.set_phase(
+                    "locating", deadline=time.time() + step.image_move.timeout_ms / 1000)
+                await _notify_runtime()
+                await _await_script_resume()
+                result = await _run_image_move(step.image_move)
+                step_result = result.model_dump(exclude={"preview_b64"})
+                if slot is None:
+                    runtime.complete_step(top_index, step_result)
+                else:
+                    runtime.complete_child_step(
+                        top_index, slot, child_index, result=step_result)
+                await _notify_runtime()
+                await kbm_ws.broadcast({"type": "image_move_result", "step": top_index,
+                                        "match": step_result})
+                return
+            else:
+                cmd = _resolve_mse_cmd(step)
+                runtime.set_phase("running")
+                await _notify_runtime()
+                logger.info(f"[STEP {top_index+1}/{total}] MSE {cmd}")
+                await _send_mouse_command(cmd)
+
+        await _await_script_resume()
+        if slot is None:
+            runtime.complete_step(top_index, step_result)
+        else:
+            runtime.complete_child_step(top_index, slot, child_index, result=step_result)
+        await _notify_runtime()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        if slot is not None:
+            message = f"{slot}[{child_index}] failed: {exc}"
+            runtime.complete_child_step(top_index, slot, child_index, error=message)
+            await _notify_runtime()
+            raise RuntimeError(message) from exc
+        raise
+
+
 async def _run_mixed_script(req: MixedScriptRequest):
     """後端逐步執行混合腳本，透過 WS 推播進度"""
-    loop = asyncio.get_event_loop()
     total = len(req.steps)
 
     # 廣播開始
@@ -1572,10 +1728,12 @@ async def _run_mixed_script(req: MixedScriptRequest):
             variables: dict[str, str] = {}
             for i, step in enumerate(req.steps):
                 await _await_script_resume()
-                step_result = None
-                script_runtime.start_step(i, "delay" if step.delay_ms > 0 and step.type != "evt" else "running")
+                if isinstance(step, MixedStep):
+                    await _run_action_step(step, top_index=i, variables=variables)
+                    continue
+
+                script_runtime.start_step(i, "running")
                 await _notify_runtime()
-                # 進度廣播
                 await kbm_ws.broadcast({
                     "type":      "script_progress",
                     "step":      i,
@@ -1583,7 +1741,6 @@ async def _run_mixed_script(req: MixedScriptRequest):
                     "step_type": step.type,
                     "iteration": iteration,
                 })
-                # 也透過 srv_ws 廣播（讓 Progress panel 更新）
                 srv_ws.broadcast_sync({
                     "type":  "status",
                     "state": "running",
@@ -1592,104 +1749,54 @@ async def _run_mixed_script(req: MixedScriptRequest):
                 })
                 await _await_script_resume()
 
-                if step.type == "evt":
-                    logger.info(f"[STEP {i+1}/{total}] EVT wait: {step.evt}")
-                    ok_evt = await _wait_for_step_event(step, i, total)
+                if isinstance(step, IfElseBlock):
+                    script_runtime.set_phase("evaluating")
+                    await _notify_runtime()
                     await _await_script_resume()
-                    if not ok_evt:
-                        return
-
-                # delay
-                if step.delay_ms > 0:
-                    await _script_sleep(step.delay_ms / 1000)
-
-                if step.type == "evt":
+                    _, matched = await _evaluate_condition_fresh(step.condition_id)
+                    branch = "then_steps" if matched else "else_steps"
+                    script_runtime.set_control_state(
+                        i, branch=branch[:-6], condition_match=matched)
+                    await _notify_runtime()
                     await _await_script_resume()
+                    for child_index, child in enumerate(getattr(step, branch)):
+                        await _await_script_resume()
+                        await _run_action_step(
+                            child, top_index=i, variables=variables,
+                            slot=branch, child_index=child_index)
                     script_runtime.complete_step(i)
                     await _notify_runtime()
                     continue
 
-                # 執行
-                if step.type == "ocr":
-                    script_runtime.set_phase("recognizing", deadline=time.time() + step.timeout_ms / 1000)
-                    await _notify_runtime()
-                    await _await_script_resume()
-                    variables.pop(step.variable, None)
-                    config = OcrConfig.model_validate(step.model_dump())
-                    variables[step.variable] = await read_stable_digits(config, frame_buffer)
-                    await _await_script_resume()
-                    step_result = {"variable": step.variable, "value": variables[step.variable]}
-                    await kbm_ws.broadcast({"type": "ocr_result", "step": i,
-                                            "variable": step.variable, "value": variables[step.variable]})
-
-                elif step.type == "srv":
-                    script_runtime.set_phase("running")
-                    await _notify_runtime()
-                    await _await_script_resume()
-                    params = {
-                        "delay_ms":    0,
-                        "servo_id":    step.servo_id or 1,
-                        "angle":       step.angle if step.angle is not None else 90,
-                        "speed":       step.speed or 60,
-                        "duration_ms": step.duration_ms if step.duration_ms is not None else 300,
-                        "home":        step.home if step.home is not None else 1,
-                    }
-                    logger.info(
-                        f"[STEP {i+1}/{total}] SRV sid={params['servo_id']} angle={params['angle']} "
-                        f"speed={params['speed']} duration={params['duration_ms']}ms"
-                    )
-                    ok = await loop.run_in_executor(
-                        executor, lambda p=params: srv_serial.send_command(p)
-                    )
-                    # 等 Servo 完成
-                    hold = (step.duration_ms or 300)
-                    angle = (step.angle or 90)
-                    wait_s = hold / 1000 + angle * 0.01 + 0.25
-                    await _script_sleep(wait_s)
-                    if not ok:
-                        script_runtime.note_error(f"SRV step {i} failed")
-                        logger.warning(f"[STEP {i+1}/{total}] SRV failed")
-                        await kbm_ws.broadcast({
-                            "type": "script_error",
-                            "step": i,
-                            "message": f"SRV step {i} failed",
-                        })
-
-                elif step.type == "kbd":
-                    script_runtime.set_phase("running")
-                    await _notify_runtime()
-                    cmd = _resolve_kbd_cmd(step, variables)
-                    logger.info(f"[STEP {i+1}/{total}] KBD {cmd}")
-                    result = await _send_kbm_command(cmd)
-                    if result != "OK":
-                        script_runtime.note_error(f"KBD ACK: {result}")
-                        logger.warning(f"[STEP {i+1}/{total}] KBD ACK={result} cmd={cmd}")
-                        await kbm_ws.broadcast({
-                            "type": "script_error",
-                            "step": i,
-                            "message": f"KBD step {i} ACK: {result} cmd: {cmd}",
-                        })
-
-                elif step.type == "mse":
-                    if (step.action or "").upper() == "IMAGE_MOVE":
-                        script_runtime.set_phase("locating", deadline=time.time() + step.image_move.timeout_ms / 1000)
+                if isinstance(step, DoWhileBlock):
+                    for current in range(1, step.max_iterations + 1):
+                        await _await_script_resume()
+                        script_runtime.set_control_state(
+                            i, iteration=current, iteration_limit=step.max_iterations)
+                        await _notify_runtime()
+                        for child_index, child in enumerate(step.steps):
+                            await _await_script_resume()
+                            await _run_action_step(
+                                child, top_index=i, variables=variables,
+                                slot="steps", child_index=child_index)
+                        await _await_script_resume()
+                        script_runtime.set_phase("evaluating")
                         await _notify_runtime()
                         await _await_script_resume()
-                        result = await _run_image_move(step.image_move)
-                        script_runtime.complete_step(i, result.model_dump(exclude={"preview_b64"}))
+                        _, matched = await _evaluate_condition_fresh(step.condition_id)
+                        script_runtime.set_control_state(i, condition_match=matched)
                         await _notify_runtime()
-                        await kbm_ws.broadcast({"type": "image_move_result", "step": i,
-                                                "match": result.model_dump(exclude={"preview_b64"})})
-                        continue
-                    cmd = _resolve_mse_cmd(step)
-                    script_runtime.set_phase("running")
+                        await _await_script_resume()
+                        should_repeat = (
+                            matched if step.repeat_when == "match" else not matched)
+                        if not should_repeat:
+                            break
+                        if current == step.max_iterations:
+                            raise RuntimeError(
+                                f"Do-while iteration limit reached ({step.max_iterations})")
+                    script_runtime.complete_step(i)
                     await _notify_runtime()
-                    logger.info(f"[STEP {i+1}/{total}] MSE {cmd}")
-                    await _send_mouse_command(cmd)
-
-                await _await_script_resume()
-                script_runtime.complete_step(i, step_result)
-                await _notify_runtime()
+                    continue
 
             iteration += 1
             if not req.loop:
@@ -1714,6 +1821,7 @@ async def _script_runner():
         while True:
             await _await_script_resume()
             req = await _script_queue.get()
+            failed = False
             try:
                 if not script_runtime.contains(req.job_id):
                     _register_runtime_job(req)
@@ -1731,15 +1839,16 @@ async def _script_runner():
                 await _await_script_resume()
                 await _run_mixed_script(req)
             except Exception as exc:
+                failed = True
                 await _await_script_resume()
-                script_runtime.note_error(str(exc))
+                script_runtime.note_error(str(exc), job_id=req.job_id)
                 script_runtime.set_phase("finishing")
                 await _notify_runtime()
                 logger.exception("Queued script failed")
                 await kbm_ws.broadcast({"type": "script_error", "message": str(exc), "fatal": True})
                 srv_ws.broadcast_sync({"type": "status", "state": "idle"})
             finally:
-                script_runtime.finish(req.job_id)
+                script_runtime.finish(req.job_id, failed=failed)
                 await _notify_runtime()
                 condition_manager.activate_only(None)
                 await event_bus.clear_visual()

@@ -145,6 +145,24 @@ class ClearCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(first["ok"] and second["ok"])
         self.assertTrue(all(value == 0 for value in second["cleared"].values()))
 
+    async def test_stop_and_clear_discard_retained_failure_without_active_job(self):
+        def retain_failure(name):
+            job_id = main.script_runtime.enqueue(
+                name=name, steps=[{"type": "kbd"}], loop=False, condition_ids=[])
+            main.script_runtime.activate(job_id)
+            main.script_runtime.note_error("script failed")
+            main.script_runtime.finish(job_id, failed=True)
+            self.assertIsNone(main.script_runtime.snapshot()["active"])
+            self.assertEqual(main.script_runtime.snapshot()["last_failure"]["job_id"], job_id)
+
+        retain_failure("stop")
+        await main.script_stop()
+        self.assertIsNone(main.script_runtime.snapshot()["last_failure"])
+
+        retain_failure("clear")
+        await self.post(self.clear_payload())
+        self.assertIsNone(main.script_runtime.snapshot()["last_failure"])
+
     async def test_invalid_commands_do_not_mutate_state(self):
         await self.seed()
         invalid = [

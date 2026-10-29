@@ -4,7 +4,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -424,6 +424,327 @@ class ScriptControlFlowSubmissionTests(unittest.IsolatedAsyncioTestCase):
                 self.activate.assert_awaited_once()
                 request = self.activate.await_args.args[0]
                 self.assertEqual(len(list(main._iter_action_steps(request.steps))), 200)
+
+
+class MixedScriptExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.runtime = main.script_runtime.__class__()
+        self.patches = [
+            patch.object(main, "script_runtime", self.runtime),
+            patch.object(main, "_await_script_resume", new_callable=AsyncMock),
+            patch.object(main, "_notify_runtime", new_callable=AsyncMock),
+            patch.object(main.kbm_ws, "broadcast", new_callable=AsyncMock),
+            patch.object(main.srv_ws, "broadcast_sync", Mock()),
+            patch.object(main, "_script_sleep", new_callable=AsyncMock),
+        ]
+        for patcher in self.patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def execute(self, payload, action_runner=None, evaluations=None):
+        request = main.MixedScriptRequest.model_validate(payload)
+        main._register_runtime_job(request)
+        self.runtime.activate(request.job_id)
+        run_action = action_runner or AsyncMock()
+        with patch.object(main, "_run_action_step", run_action, create=True), \
+             patch.object(main, "_evaluate_condition_fresh",
+                          new_callable=AsyncMock,
+                          side_effect=evaluations or [(0.95, True)]):
+            await main._run_mixed_script(request)
+        return request.job_id, run_action
+
+    async def test_if_executes_only_the_selected_branch_and_records_decision(self):
+        for matched, branch, expected_text in (
+            (True, "then", "then"),
+            (False, "else", "else"),
+        ):
+            with self.subTest(matched=matched):
+                run_action = AsyncMock()
+                job_id, _ = await self.execute({
+                    "steps": [{
+                        "type": "if_else", "condition_id": "door",
+                        "then_steps": [{"type": "kbd", "text": "then"}],
+                        "else_steps": [{"type": "kbd", "text": "else"}],
+                    }]
+                }, run_action, [(0.95, matched)])
+
+                self.assertEqual(run_action.await_count, 1)
+                kwargs = run_action.await_args.kwargs
+                self.assertEqual(run_action.await_args.args[0].text, expected_text)
+                self.assertEqual(kwargs["slot"], f"{branch}_steps")
+                item = self.runtime.detail(job_id)["steps"][0]
+                self.assertEqual(item["control"]["branch"], branch)
+                self.assertIs(item["control"]["condition_match"], matched)
+
+    async def test_do_while_runs_once_then_repeats_using_each_repeat_mode(self):
+        for mode, conditions, max_iterations, expected_iterations in (
+            ("match", [True, False], 2, 2),
+            ("not_match", [False, True], 2, 2),
+            ("match", [False], 2, 1),
+            ("match", [False], 1, 1),
+        ):
+            with self.subTest(mode=mode, conditions=conditions,
+                              max_iterations=max_iterations):
+                run_action = AsyncMock()
+                job_id, _ = await self.execute({
+                    "steps": [{
+                        "type": "do_while", "condition_id": "door",
+                        "repeat_when": mode, "max_iterations": max_iterations,
+                        "steps": [{"type": "kbd", "text": "body"}],
+                    }]
+                }, run_action, [(0.95, match) for match in conditions])
+
+                self.assertEqual(run_action.await_count, expected_iterations)
+                self.assertTrue(all(call.kwargs["slot"] == "steps"
+                                    for call in run_action.await_args_list))
+                item = self.runtime.detail(job_id)["steps"][0]
+                self.assertEqual(item["control"]["iteration"], expected_iterations)
+                self.assertEqual(item["control"]["iteration_limit"], max_iterations)
+
+    async def test_each_do_while_iteration_and_condition_change_is_published(self):
+        run_action = AsyncMock()
+        await self.execute({
+            "steps": [{
+                "type": "do_while", "condition_id": "door",
+                "repeat_when": "match", "max_iterations": 2,
+                "steps": [{"type": "kbd", "text": "body"}],
+            }]
+        }, run_action, [(0.95, True), (0.95, False)])
+
+        self.assertEqual(run_action.await_count, 2)
+        main._notify_runtime.assert_awaited()
+        self.assertEqual(main._notify_runtime.await_count, 8)
+
+    async def test_iteration_limit_failure_stops_before_later_actions(self):
+        run_action = AsyncMock()
+        request = {
+            "steps": [
+                {"type": "do_while", "condition_id": "door",
+                 "repeat_when": "match", "max_iterations": 1,
+                 "steps": [{"type": "kbd", "text": "body"}]},
+                {"type": "kbd", "text": "must not run"},
+            ]
+        }
+        with self.assertRaisesRegex(RuntimeError, r"iteration limit reached \(1\)"):
+            await self.execute(request, run_action, [(0.95, True)])
+
+        self.assertEqual(run_action.await_count, 1)
+        self.assertEqual(run_action.await_args.args[0].text, "body")
+
+    async def test_all_ordinary_action_types_run_as_children_with_shared_ocr_variables(self):
+        def make_request():
+            template = main.np.random.default_rng(42).integers(
+                0, 256, (16, 20, 3), dtype=main.np.uint8)
+            _, encoded = main.cv2.imencode(".png", template)
+            template_b64 = base64.b64encode(encoded).decode()
+            return main.MixedScriptRequest.model_validate({
+                "steps": [{
+                    "type": "if_else", "condition_id": "door",
+                    "then_steps": [
+                        {"type": "evt", "evt": "READY", "delay_ms": 5},
+                        {"type": "ocr", "roi": [0, 0, 1, 1], "variable": "digits"},
+                        {"type": "kbd", "cmd_type": "TYPE", "text": "${digits}"},
+                        {"type": "srv", "servo_id": 1, "angle": 45},
+                        {"type": "mse", "action": "MOVE", "x": 4, "y": 8},
+                        {"type": "mse", "action": "IMAGE_MOVE", "image_move": {
+                            "template_b64": template_b64,
+                            "source_width": 200, "source_height": 100}},
+                    ],
+                    "else_steps": [],
+                }]
+            })
+
+        request = await asyncio.to_thread(make_request)
+        main._register_runtime_job(request)
+        self.runtime.activate(request.job_id)
+        servo_send = Mock(return_value=True)
+        image_result = main.ImageMatch(
+            box=[50, 30, 20, 16], center=[59.5, 37.5], hid=[9797, 12412],
+            score=1, frame_width=200, frame_height=100, preview_b64="preview")
+        with patch.object(main, "_evaluate_condition_fresh",
+                          new_callable=AsyncMock, return_value=(0.95, True)), \
+             patch.object(main, "_wait_for_step_event",
+                          new_callable=AsyncMock, return_value=True) as wait_event, \
+             patch.object(main, "read_stable_digits",
+                          new_callable=AsyncMock, return_value="0042"), \
+             patch.object(main, "_run_image_move",
+                          new_callable=AsyncMock, return_value=image_result) as image_move, \
+             patch.object(main, "_send_kbm_command",
+                          new_callable=AsyncMock, return_value="OK") as send_key, \
+             patch.object(main, "_send_mouse_command",
+                          new_callable=AsyncMock) as send_mouse, \
+             patch.object(main.srv_serial, "send_command", servo_send):
+            await main._run_mixed_script(request)
+
+        self.assertEqual(wait_event.await_args.args[1:], (0, 1))
+        send_key.assert_awaited_once_with("TYPE:0042")
+        send_mouse.assert_awaited_once_with("MOUSE:MOVE 4 8")
+        servo_send.assert_called_once()
+        image_move.assert_awaited_once()
+        item = self.runtime.detail(request.job_id)["steps"][0]
+        self.assertEqual(
+            [child["state"] for child in item["children"]["then_steps"]],
+            ["completed"] * 6)
+        self.assertEqual(item["children"]["then_steps"][1]["result"]["value"], "0042")
+        self.assertNotIn("preview_b64", item["children"]["then_steps"][5]["result"])
+
+    async def test_failed_child_status_names_slot_and_index_in_parent_error(self):
+        request = main.MixedScriptRequest.model_validate({
+            "steps": [{
+                "type": "if_else", "condition_id": "door",
+                "then_steps": [{"type": "kbd", "cmd": "KEY:A"},
+                               {"type": "kbd", "cmd": "KEY:B"}],
+                "else_steps": [],
+            }]
+        })
+        main._register_runtime_job(request)
+        self.runtime.activate(request.job_id)
+        with patch.object(main, "_evaluate_condition_fresh",
+                          new_callable=AsyncMock, return_value=(0.95, True)), \
+             patch.object(main, "_send_kbm_command",
+                          new_callable=AsyncMock, side_effect=["BUSY", "OK"]):
+            await main._run_mixed_script(request)
+
+        detail = self.runtime.detail(request.job_id)
+        item = detail["steps"][0]
+        self.assertEqual(item["children"]["then_steps"][0]["state"], "failed")
+        self.assertEqual(item["children"]["then_steps"][0]["error"],
+                         "then_steps[0]: KBD ACK: BUSY")
+        self.assertEqual(item["error"], "then_steps[0]: KBD ACK: BUSY")
+        self.assertEqual(item["children"]["then_steps"][1]["state"], "completed")
+
+    async def test_paused_block_does_not_start_its_next_action_before_resume(self):
+        request = main.MixedScriptRequest.model_validate({
+            "steps": [{
+                "type": "if_else", "condition_id": "door",
+                "then_steps": [{"type": "kbd", "cmd": "KEY:A"},
+                               {"type": "kbd", "cmd": "KEY:B"}],
+                "else_steps": [],
+            }]
+        })
+        main._register_runtime_job(request)
+        self.runtime.activate(request.job_id)
+        first_action_done = asyncio.Event()
+        resume = asyncio.Event()
+        actions = []
+
+        async def wait_for_resume():
+            if first_action_done.is_set():
+                await resume.wait()
+
+        async def record_action(step, **kwargs):
+            actions.append(step.cmd)
+            if len(actions) == 1:
+                first_action_done.set()
+
+        self.patches[1].stop()
+        pause_patch = patch.object(main, "_await_script_resume", side_effect=wait_for_resume)
+        pause_patch.start()
+        self.addCleanup(pause_patch.stop)
+        with patch.object(main, "_evaluate_condition_fresh",
+                          new_callable=AsyncMock, return_value=(0.95, True)), \
+             patch.object(main, "_run_action_step", side_effect=record_action, create=True):
+            task = asyncio.create_task(main._run_mixed_script(request))
+            await asyncio.wait_for(first_action_done.wait(), timeout=1)
+            await asyncio.sleep(0)
+            self.assertEqual(actions, ["KEY:A"])
+            resume.set()
+            await asyncio.wait_for(task, timeout=1)
+
+        self.assertEqual(actions, ["KEY:A", "KEY:B"])
+
+    async def test_runner_retains_iteration_limit_failure_as_latest_job(self):
+        request = main.MixedScriptRequest.model_validate({
+            "steps": [
+                {"type": "do_while", "condition_id": "door",
+                 "repeat_when": "match", "max_iterations": 1,
+                 "steps": [{"type": "kbd", "cmd": "KEY:A"}]},
+                {"type": "kbd", "cmd": "KEY:B"},
+            ]
+        })
+        main._register_runtime_job(request)
+        queue = asyncio.Queue()
+        await queue.put(request)
+        action = AsyncMock()
+        with patch.object(main, "_script_queue", queue), \
+             patch.object(main, "_auto_attach_servos", new_callable=AsyncMock), \
+             patch.object(main.event_bus, "clear_visual", new_callable=AsyncMock), \
+             patch.object(main.condition_manager, "activate_only", Mock()), \
+             patch.object(main, "_run_action_step", action, create=True), \
+             patch.object(main, "_evaluate_condition_fresh",
+                          new_callable=AsyncMock, return_value=(0.95, True)), \
+             patch.object(main.srv_ws, "broadcast", new_callable=AsyncMock):
+            await main._script_runner()
+
+        failure = self.runtime.detail(request.job_id)
+        self.assertEqual(failure["phase"], "failed")
+        self.assertIn("iteration limit reached (1)", failure["error"])
+        self.assertEqual(self.runtime.snapshot()["last_failure"]["job_id"], request.job_id)
+        self.assertEqual(action.await_count, 1)
+
+    async def test_runner_retains_error_when_failure_precedes_activation(self):
+        request = main.MixedScriptRequest.model_validate({
+            "steps": [{"type": "kbd", "cmd": "KEY:A"}]
+        })
+        main._register_runtime_job(request)
+        queue = asyncio.Queue()
+        await queue.put(request)
+        with patch.object(main, "_script_queue", queue), \
+             patch.object(main.event_bus, "clear_visual",
+                          new_callable=AsyncMock,
+                          side_effect=[RuntimeError("visual reset failed"), None]), \
+             patch.object(main.condition_manager, "activate_only", Mock()), \
+             patch.object(main.srv_ws, "broadcast", new_callable=AsyncMock):
+            await main._script_runner()
+
+        failure = self.runtime.detail(request.job_id)
+        self.assertEqual(failure["phase"], "failed")
+        self.assertEqual(failure["error"], "visual reset failed")
+        self.assertEqual(self.runtime.snapshot()["last_failure"]["job_id"], request.job_id)
+
+    async def test_active_block_keeps_fifo_runner_ahead_of_queued_job(self):
+        first = main.MixedScriptRequest.model_validate({
+            "steps": [{
+                "type": "if_else", "condition_id": "door",
+                "then_steps": [{"type": "kbd", "cmd": "KEY:first"}],
+                "else_steps": [],
+            }]
+        })
+        second = main.MixedScriptRequest.model_validate({
+            "steps": [{"type": "kbd", "cmd": "KEY:second"}]
+        })
+        main._register_runtime_job(first)
+        main._register_runtime_job(second)
+        queue = asyncio.Queue()
+        await queue.put(first)
+        await queue.put(second)
+        block_started = asyncio.Event()
+        release_block = asyncio.Event()
+        actions = []
+
+        async def run_action(step, **kwargs):
+            actions.append(step.cmd)
+            if step.cmd == "KEY:first":
+                block_started.set()
+                await release_block.wait()
+
+        with patch.object(main, "_script_queue", queue), \
+             patch.object(main, "_auto_attach_servos", new_callable=AsyncMock), \
+             patch.object(main.event_bus, "clear_visual", new_callable=AsyncMock), \
+             patch.object(main.condition_manager, "activate_only", Mock()), \
+             patch.object(main, "_run_action_step", side_effect=run_action, create=True), \
+             patch.object(main, "_evaluate_condition_fresh",
+                          new_callable=AsyncMock, return_value=(0.95, True)), \
+             patch.object(main.srv_ws, "broadcast", new_callable=AsyncMock):
+            runner = asyncio.create_task(main._script_runner())
+            await asyncio.wait_for(block_started.wait(), timeout=1)
+            await asyncio.sleep(0)
+            self.assertEqual(actions, ["KEY:first"])
+            release_block.set()
+            await asyncio.wait_for(runner, timeout=1)
+
+        self.assertEqual(actions, ["KEY:first", "KEY:second"])
+        self.assertIsNone(self.runtime.snapshot()["active"])
 
 
 if __name__ == "__main__":
