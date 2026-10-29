@@ -469,6 +469,7 @@ class ConditionManager:
 frame_buffer     = FrameBuffer(capture_fps=15)
 snapshot_pool    = SnapshotPool()
 condition_manager = ConditionManager()
+CONTROL_FRAME_TIMEOUT_SECONDS = 5.0
 
 
 class EventBus:
@@ -996,6 +997,47 @@ async def _auto_connect_serial_devices():
 
 
 # ── Visual Monitor ────────────────────────────────────────────
+def _match_condition_frame(condition: MatchCondition, frame: Any) -> tuple[float, bool]:
+    snapshot = snapshot_pool.get(condition.snapshot_id)
+    if snapshot is None:
+        raise RuntimeError(
+            f"Snapshot for condition {condition.condition_id} is unavailable")
+    if frame is None or not hasattr(frame, "shape") or len(frame.shape) < 2:
+        raise ValueError("Camera returned an invalid frame")
+
+    fh, fw = frame.shape[:2]
+    rx, ry, rw, rh = condition.roi
+    x1, y1 = max(0, int(rx * fw)), max(0, int(ry * fh))
+    x2, y2 = min(fw, int((rx + rw) * fw)), min(fh, int((ry + rh) * fh))
+    if x2 <= x1 or y2 <= y1:
+        raise ValueError(f"Invalid ROI for condition {condition.condition_id}")
+    curr_roi = frame[y1:y2, x1:x2]
+
+    try:
+        template = cv2.imdecode(
+            np.frombuffer(base64.b64decode(snapshot["jpeg_b64"]), dtype=np.uint8),
+            cv2.IMREAD_COLOR,
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"Snapshot for condition {condition.condition_id} is invalid") from exc
+    if template is None:
+        raise ValueError(f"Snapshot for condition {condition.condition_id} is invalid")
+
+    sh, sw = template.shape[:2]
+    tx1, ty1 = max(0, int(rx * sw)), max(0, int(ry * sh))
+    tx2, ty2 = min(sw, int((rx + rw) * sw)), min(sh, int((ry + rh) * sh))
+    if tx2 <= tx1 or ty2 <= ty1:
+        raise ValueError(f"Invalid snapshot ROI for condition {condition.condition_id}")
+    template_roi = template[ty1:ty2, tx1:tx2]
+    if template_roi.shape[:2] != curr_roi.shape[:2]:
+        template_roi = cv2.resize(template_roi, (curr_roi.shape[1], curr_roi.shape[0]))
+
+    score = float(cv2.matchTemplate(
+        curr_roi, template_roi, cv2.TM_CCOEFF_NORMED)[0][0])
+    return score, score >= condition.threshold
+
+
 async def _eval_condition(
     cond: MatchCondition, rt: ConditionRuntime, frame: Any, fw: int, fh: int,
     frame_generation: Optional[int] = None,
@@ -1407,6 +1449,34 @@ async def _await_script_resume():
             await asyncio.sleep(0)
         else:
             await resume.wait()
+
+
+async def _evaluate_condition_fresh(
+    condition_id: str,
+    timeout_seconds: float = CONTROL_FRAME_TIMEOUT_SECONDS,
+) -> tuple[float, bool]:
+    condition = condition_manager.get(condition_id)
+    if condition is None or snapshot_pool.get(condition.snapshot_id) is None:
+        raise RuntimeError(f"Condition {condition_id} is unavailable")
+
+    remaining = timeout_seconds
+    initial_generation = frame_buffer.generation
+    loop = asyncio.get_running_loop()
+    while remaining > 0:
+        await _await_script_resume()
+        started = loop.time()
+        frame, generation = frame_buffer.read_sample()
+        if frame is not None and generation > initial_generation:
+            if condition_manager.get(condition_id) is not condition:
+                raise RuntimeError(
+                    f"Condition {condition_id} was removed during evaluation")
+            return _match_condition_frame(condition, frame)
+        await asyncio.sleep(min(0.01, remaining))
+        remaining -= loop.time() - started
+
+    raise TimeoutError(
+        f"No fresh camera frame for condition {condition_id} within "
+        f"{timeout_seconds:g} seconds")
 
 
 async def _script_sleep(seconds: float):
@@ -2511,26 +2581,10 @@ async def visual_test_condition(cid: str):
     if snap is None:
         raise HTTPException(404, "Snapshot for this condition no longer in pool")
     try:
-        fh, fw = frame.shape[:2]
-        rx, ry, rw, rh = cond.roi
-        x1 = max(0, int(rx * fw));        y1 = max(0, int(ry * fh))
-        x2 = min(fw, int((rx + rw) * fw)); y2 = min(fh, int((ry + rh) * fh))
-        curr_roi = frame[y1:y2, x1:x2]
-        tmpl_full = cv2.imdecode(
-            np.frombuffer(base64.b64decode(snap["jpeg_b64"]), dtype=np.uint8),
-            cv2.IMREAD_COLOR
-        )
-        sh, sw = tmpl_full.shape[:2]
-        tx1 = max(0, int(rx * sw));        ty1 = max(0, int(ry * sh))
-        tx2 = min(sw, int((rx + rw) * sw)); ty2 = min(sh, int((ry + rh) * sh))
-        snap_roi = tmpl_full[ty1:ty2, tx1:tx2]
-        if snap_roi.shape[0] != curr_roi.shape[0] or snap_roi.shape[1] != curr_roi.shape[1]:
-            snap_roi = cv2.resize(snap_roi, (curr_roi.shape[1], curr_roi.shape[0]))
-        result = cv2.matchTemplate(curr_roi, snap_roi, cv2.TM_CCOEFF_NORMED)
-        score = float(result[0][0])
+        score, matched = _match_condition_frame(cond, frame)
     except Exception as exc:
         raise HTTPException(500, f"Match failed: {exc}")
-    return {"score": round(score, 4), "matched": score >= cond.threshold, "threshold": cond.threshold}
+    return {"score": round(score, 4), "matched": matched, "threshold": cond.threshold}
 
 
 if __name__ == "__main__":

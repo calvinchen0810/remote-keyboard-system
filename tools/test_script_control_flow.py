@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import sys
 import unittest
@@ -11,6 +12,226 @@ from starlette.requests import Request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 import main
+
+
+class SharedConditionMatcherTests(unittest.TestCase):
+    def setUp(self):
+        self.frame = main.np.random.default_rng(42).integers(
+            0, 256, (32, 32, 3), dtype=main.np.uint8)
+        ok, encoded = main.cv2.imencode(".jpg", self.frame)
+        self.assertTrue(ok)
+        self.snapshot = {"jpeg_b64": base64.b64encode(encoded).decode()}
+        self.frame = main.cv2.imdecode(encoded, main.cv2.IMREAD_COLOR)
+        self.condition = main.MatchCondition(
+            condition_id="door", name="Door", snapshot_id="snapshot",
+            roi=[0.0, 0.0, 1.0, 1.0], threshold=0.9, min_hits=10,
+        )
+
+    def test_matcher_returns_score_and_match_for_matching_roi(self):
+        with patch.object(main.snapshot_pool, "get", return_value=self.snapshot):
+            score, matched = main._match_condition_frame(self.condition, self.frame)
+
+        self.assertGreaterEqual(score, 0.99)
+        self.assertTrue(matched)
+
+    def test_matcher_returns_non_match_below_threshold(self):
+        other_frame = main.np.random.default_rng(43).integers(
+            0, 256, (32, 32, 3), dtype=main.np.uint8)
+        with patch.object(main.snapshot_pool, "get", return_value=self.snapshot):
+            score, matched = main._match_condition_frame(self.condition, other_frame)
+
+        self.assertLess(score, self.condition.threshold)
+        self.assertFalse(matched)
+
+    def test_matcher_reports_missing_snapshot_and_invalid_frame(self):
+        with patch.object(main.snapshot_pool, "get", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "Snapshot.*door.*unavailable"):
+                main._match_condition_frame(self.condition, self.frame)
+
+        with patch.object(main.snapshot_pool, "get", return_value=self.snapshot):
+            with self.assertRaisesRegex(ValueError, "invalid frame"):
+                main._match_condition_frame(self.condition, None)
+
+
+class FreshConditionFrameTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.frame = main.np.random.default_rng(42).integers(
+            0, 256, (32, 32, 3), dtype=main.np.uint8)
+        ok, encoded = main.cv2.imencode(".jpg", self.frame)
+        self.assertTrue(ok)
+        self.snapshot = {"jpeg_b64": base64.b64encode(encoded).decode()}
+        self.frame = main.cv2.imdecode(encoded, main.cv2.IMREAD_COLOR)
+        self.condition = main.MatchCondition(
+            condition_id="door", name="Door", snapshot_id="snapshot",
+            roi=[0.0, 0.0, 1.0, 1.0], threshold=0.9, min_hits=10,
+        )
+
+    async def test_evaluation_waits_for_a_new_frame_and_ignores_min_hits(self):
+        class SampleBuffer:
+            generation = 10
+
+            def __init__(self):
+                self.samples = iter([(self_frame, 10), (self_frame, 11)])
+
+            def read_sample(self):
+                try:
+                    return next(self.samples)
+                except StopIteration:
+                    return self_frame, 11
+
+        self_frame = self.frame
+        with patch.object(main.condition_manager, "get", return_value=self.condition), \
+             patch.object(main.snapshot_pool, "get", return_value=self.snapshot), \
+             patch.object(main, "frame_buffer", SampleBuffer()):
+            score, matched = await main._evaluate_condition_fresh(
+                "door", timeout_seconds=0.1)
+
+        self.assertGreaterEqual(score, 0.99)
+        self.assertTrue(matched)
+
+    async def test_evaluation_returns_non_match_for_a_new_frame(self):
+        other_frame = main.np.random.default_rng(43).integers(
+            0, 256, (32, 32, 3), dtype=main.np.uint8)
+
+        class NewFrameBuffer:
+            generation = 10
+
+            def read_sample(self):
+                return other_frame, 11
+
+        with patch.object(main.condition_manager, "get", return_value=self.condition), \
+             patch.object(main.snapshot_pool, "get", return_value=self.snapshot), \
+             patch.object(main, "frame_buffer", NewFrameBuffer()):
+            score, matched = await main._evaluate_condition_fresh(
+                "door", timeout_seconds=0.1)
+
+        self.assertLess(score, self.condition.threshold)
+        self.assertFalse(matched)
+
+    async def test_evaluation_times_out_when_no_new_frame_arrives(self):
+        class StalledBuffer:
+            generation = 7
+
+            def read_sample(self):
+                return self_frame, 7
+
+        self_frame = self.frame
+        with patch.object(main.condition_manager, "get", return_value=self.condition), \
+             patch.object(main.snapshot_pool, "get", return_value=self.snapshot), \
+             patch.object(main, "frame_buffer", StalledBuffer()):
+            with self.assertRaisesRegex(TimeoutError, "No fresh camera frame.*door"):
+                await main._evaluate_condition_fresh("door", timeout_seconds=0.01)
+
+    async def test_evaluation_reports_missing_condition_or_snapshot(self):
+        with patch.object(main.condition_manager, "get", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "Condition door is unavailable"):
+                await main._evaluate_condition_fresh("door", timeout_seconds=0.01)
+
+        with patch.object(main.condition_manager, "get", return_value=self.condition), \
+             patch.object(main.snapshot_pool, "get", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "Condition door is unavailable"):
+                await main._evaluate_condition_fresh("door", timeout_seconds=0.01)
+
+    async def test_evaluation_wait_is_pause_aware_and_propagates_stop_cancellation(self):
+        class NewFrameBuffer:
+            generation = 2
+
+            def read_sample(self):
+                return self_frame, 3
+
+        self_frame = self.frame
+        resume = asyncio.Event()
+        paused = {"reason": "manual"}
+        with patch.object(main.condition_manager, "get", return_value=self.condition), \
+             patch.object(main.snapshot_pool, "get", return_value=self.snapshot), \
+             patch.object(main, "frame_buffer", NewFrameBuffer()), \
+             patch.object(main, "_script_pause", paused), \
+             patch.object(main, "_script_resume_event", resume):
+            task = asyncio.create_task(main._evaluate_condition_fresh(
+                "door", timeout_seconds=0.01))
+            await asyncio.sleep(0)
+            self.assertFalse(task.done())
+            await asyncio.sleep(0.02)
+            resume.set()
+            main._script_pause = None
+            score, matched = await task
+            self.assertGreaterEqual(score, 0.99)
+            self.assertTrue(matched)
+
+        class StalledBuffer:
+            generation = 4
+
+            def read_sample(self):
+                return self_frame, 4
+
+        with patch.object(main.condition_manager, "get", return_value=self.condition), \
+             patch.object(main.snapshot_pool, "get", return_value=self.snapshot), \
+             patch.object(main, "frame_buffer", StalledBuffer()):
+            task = asyncio.create_task(main._evaluate_condition_fresh(
+                "door", timeout_seconds=1))
+            await asyncio.sleep(0)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+
+class ManualConditionTestEndpointTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        frame = main.np.random.default_rng(42).integers(
+            0, 256, (32, 32, 3), dtype=main.np.uint8)
+        ok, encoded = main.cv2.imencode(".jpg", frame)
+        self.assertTrue(ok)
+        self.frame = main.cv2.imdecode(encoded, main.cv2.IMREAD_COLOR)
+        self.snapshot = {"jpeg_b64": base64.b64encode(encoded).decode()}
+        self.condition = main.MatchCondition(
+            condition_id="door", name="Door", snapshot_id="snapshot",
+            roi=[0.0, 0.0, 1.0, 1.0], threshold=0.9,
+        )
+
+    async def test_success_keeps_the_existing_response_shape(self):
+        with patch.object(main.condition_manager, "get", return_value=self.condition), \
+             patch.object(main.snapshot_pool, "get", return_value=self.snapshot), \
+             patch.object(main.frame_buffer, "read", return_value=self.frame):
+            result = await main.visual_test_condition("door")
+
+        self.assertEqual(set(result), {"score", "matched", "threshold"})
+        self.assertEqual(result["score"], 1.0)
+        self.assertTrue(result["matched"])
+        self.assertEqual(result["threshold"], self.condition.threshold)
+
+    async def test_missing_condition_frame_and_snapshot_keep_existing_http_errors(self):
+        with patch.object(main.condition_manager, "get", return_value=None):
+            with self.assertRaises(HTTPException) as raised:
+                await main.visual_test_condition("door")
+        self.assertEqual((raised.exception.status_code, raised.exception.detail),
+                         (404, "Condition not found"))
+
+        with patch.object(main.condition_manager, "get", return_value=self.condition), \
+             patch.object(main.frame_buffer, "read", return_value=None):
+            with self.assertRaises(HTTPException) as raised:
+                await main.visual_test_condition("door")
+        self.assertEqual((raised.exception.status_code, raised.exception.detail),
+                         (503, "Camera not available"))
+
+        with patch.object(main.condition_manager, "get", return_value=self.condition), \
+             patch.object(main.frame_buffer, "read", return_value=self.frame), \
+             patch.object(main.snapshot_pool, "get", return_value=None):
+            with self.assertRaises(HTTPException) as raised:
+                await main.visual_test_condition("door")
+        self.assertEqual(
+            (raised.exception.status_code, raised.exception.detail),
+            (404, "Snapshot for this condition no longer in pool"))
+
+    async def test_matcher_errors_keep_the_existing_http_500_prefix(self):
+        with patch.object(main.condition_manager, "get", return_value=self.condition), \
+             patch.object(main.frame_buffer, "read", return_value=self.frame), \
+             patch.object(main.snapshot_pool, "get", return_value=self.snapshot), \
+             patch.object(main, "_match_condition_frame", side_effect=ValueError("broken")):
+            with self.assertRaises(HTTPException) as raised:
+                await main.visual_test_condition("door")
+
+        self.assertEqual((raised.exception.status_code, raised.exception.detail),
+                         (500, "Match failed: broken"))
 
 
 class ScriptControlFlowValidationTests(unittest.TestCase):
