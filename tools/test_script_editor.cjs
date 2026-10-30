@@ -195,6 +195,35 @@ test('actions move between blocks and back to a requested top-level position', (
   assert.equal(editor.steps.flatMap(step => step.type === 'do_while' ? step.steps : []).filter(step => step._id === action._id).length, 0);
 });
 
+test('control slots reserve matching columns and keep action parameters on one line', () => {
+  const editor = createEditor();
+  editor.addKbdStep();
+  const action = editor.steps[0];
+  const block = editor.addIfElseBlock();
+  editor.moveStepToSlot(action._id, block._id, 'then_steps');
+  const panel = editor.renderedRows[0].children[0].children[0];
+  const tables = panel.children.map(slot => slot.children[0]);
+  for (const table of tables) {
+    assert.match(table.innerHTML, /<colgroup><col style="width:14px"><col style="width:48px"><col style="width:52px"><col><col style="width:22px"><\/colgroup>/);
+  }
+  assert.match(tables[0].children[0].children[0].innerHTML, /class="step-params"/);
+  assert.match(html, /\.control-slot-table td\{white-space:nowrap\}/);
+  assert.match(html, /\.step-params>span\{flex-wrap:nowrap!important/);
+});
+
+test('control block delete buttons occupy the same final column as ordinary steps', () => {
+  const editor = createEditor();
+  editor.addIfElseBlock();
+  editor.addDoWhileBlock();
+  for (const row of editor.renderedRows) {
+    assert.equal(row.children[0].colSpan, 4);
+    assert.equal(row.children.length, 2);
+    assert.equal(row.children[1].className, 'control-delete-cell');
+    assert.match(row.children[1].innerHTML, /aria-label="Remove control block"/);
+    assert.doesNotMatch(row.children[0].children[0].innerHTML, /requestBlockDelete/);
+  }
+});
+
 test('control nodes cannot be moved into a slot and invalid moves are reported', () => {
   const editor = createEditor();
   const outer = editor.addIfElseBlock();

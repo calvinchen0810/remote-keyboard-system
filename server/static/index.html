@@ -171,6 +171,10 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
 .control-slot{border:1px dashed var(--bd);border-left:2px solid var(--grn2);margin:5px 0 3px 14px;padding:3px 4px;min-height:28px;background:rgba(34,197,94,.025)}
 .control-slot-label{font-family:var(--mono);font-size:9px;color:var(--fg3)}
 .control-slot-table{margin-top:2px}
+.control-slot-table td{white-space:nowrap}
+.control-slot-table .step-params{display:flex;align-items:center;gap:2px;overflow-x:auto}
+.step-params>span{flex-wrap:nowrap!important;flex-shrink:0}
+.step-params>select{flex-shrink:0}
 .control-slot-table:empty{display:none}
 #block-delete-dialog:not([hidden]){position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:16px}
 .block-delete-card{display:flex;flex-direction:column;gap:8px;min-width:240px;padding:16px;background:var(--card);border:1px solid var(--br);box-shadow:0 8px 32px #000}
@@ -180,6 +184,7 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
 .stbl tbody tr:hover{background:var(--hov)}
 .stbl tbody tr.drag-over{border-top:2px solid var(--grn2)}
 .stbl td{padding:3px 3px;vertical-align:middle}
+.stbl td.control-delete-cell{vertical-align:top;padding-top:12px}
 .badge{display:inline-flex;align-items:center;padding:2px 6px;border-radius:2px;font-size:10px;font-weight:600;white-space:nowrap}
 .b-srv{background:rgba(245,158,11,.12);color:#d97706;border:1px solid rgba(245,158,11,.3)}
 .b-kbd{background:rgba(167,139,250,.12);color:#8b5cf6;border:1px solid rgba(167,139,250,.3)}
@@ -1552,7 +1557,7 @@ function wireTopLevelBlockDrag(row,block,index){
 }
 function renderControlBlock(block,index,tb){
   const row=document.createElement('tr'),cell=document.createElement('td');
-  cell.colSpan=5;
+  cell.colSpan=4;
   const panel=document.createElement('div');
   panel.className='control-block '+(block.type==='if_else'?'control-if':'control-repeat');
   const escAttr=escapeEditorAttr;
@@ -1562,8 +1567,8 @@ function renderControlBlock(block,index,tb){
   }).join('');
   const conditionSelect=`<select class="ti-s" aria-label="Control block condition" onchange="updateControlBlock(${block._id},'condition_id',this.value)"><option value="">Choose Condition...</option>${options}</select>`;
   panel.innerHTML=block.type==='if_else'
-    ?`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>IF / ELSE</strong>${conditionSelect}<button class="del-btn" aria-label="Remove control block" onclick="requestBlockDelete(${block._id})">✕</button></div>`
-    :`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>DO-WHILE</strong>${conditionSelect}<label>repeat <select class="ti-s" aria-label="Repeat when" onchange="updateControlBlock(${block._id},'repeat_when',this.value)"><option value="match"${block.repeat_when==='match'?' selected':''}>MATCH</option><option value="not_match"${block.repeat_when==='not_match'?' selected':''}>NOT MATCH</option></select></label><label>max <input class="ti" aria-label="Maximum iterations" type="number" min="1" max="10000" value="${escapeEditorAttr(block.max_iterations)}" onchange="updateControlBlock(${block._id},'max_iterations',this.value)"></label><button class="del-btn" aria-label="Remove control block" onclick="requestBlockDelete(${block._id})">✕</button></div>`;
+    ?`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>IF / ELSE</strong>${conditionSelect}</div>`
+    :`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>DO-WHILE</strong>${conditionSelect}<label>repeat <select class="ti-s" aria-label="Repeat when" onchange="updateControlBlock(${block._id},'repeat_when',this.value)"><option value="match"${block.repeat_when==='match'?' selected':''}>MATCH</option><option value="not_match"${block.repeat_when==='not_match'?' selected':''}>NOT MATCH</option></select></label><label>max <input class="ti" aria-label="Maximum iterations" type="number" min="1" max="10000" value="${escapeEditorAttr(block.max_iterations)}" onchange="updateControlBlock(${block._id},'max_iterations',this.value)"></label></div>`;
   const slots=block.type==='if_else'
     ?[['then_steps','THEN'],['else_steps','ELSE']]:[['steps','BODY']];
   slots.forEach(([slot,label])=>{
@@ -1571,7 +1576,9 @@ function renderControlBlock(block,index,tb){
     drop.className='control-slot';
     drop.innerHTML=`<div class="control-slot-label">${label} · drop actions here</div>`;
     const table=document.createElement('table'),body=document.createElement('tbody');
-    table.className='stbl control-slot-table';table.appendChild(body);drop.appendChild(table);
+    table.className='stbl control-slot-table';
+    table.innerHTML='<colgroup><col style="width:14px"><col style="width:48px"><col style="width:52px"><col><col style="width:22px"></colgroup>';
+    table.appendChild(body);drop.appendChild(table);
     drop.addEventListener('dragover',event=>event.preventDefault());
     drop.addEventListener('drop',event=>{
       event.preventDefault();event.stopPropagation();
@@ -1583,6 +1590,10 @@ function renderControlBlock(block,index,tb){
     renderStepList(block[slot]||[],body,block._id,slot);
   });
   cell.appendChild(panel);row.appendChild(cell);
+  const deleteCell=document.createElement('td');
+  deleteCell.className='control-delete-cell';
+  deleteCell.innerHTML=`<button class="del-btn" aria-label="Remove control block" onclick="requestBlockDelete(${block._id})">✕</button>`;
+  row.appendChild(deleteCell);
   wireTopLevelBlockDrag(row,block,index);
   tb.appendChild(row);
 }
@@ -1663,7 +1674,7 @@ function renderStepList(list,tb,parentBlockId=null,parentSlot=null){
       <td><input class="ti pop-inp" value="${s.delay_ms}" style="width:38px"
           oninput="updStep(${s._id},'delay_ms',this.value)"
           onclick="event.stopPropagation();showPop(this,'DELAY ms',0,30000,500)"></td>
-      <td>${params}</td>
+      <td>${parentBlockId!==null?`<div class="step-params">${params}</div>`:params}</td>
       <td><button class="del-btn" onclick="delStep(${s._id})">✕</button></td>`;
     tr.addEventListener('dragstart',e=>{
       e.stopPropagation();dragSrc=s._id;tr.classList.add('dragging');
