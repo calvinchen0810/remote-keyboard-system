@@ -171,10 +171,48 @@ test('control blocks have stable defaults and preserve an action when moved betw
   assert.equal([branch, ...branch.then_steps, ...branch.else_steps].filter(step => step._id === action._id).length, 1);
 });
 
+test('while blocks default to pre-test match with an empty body', () => {
+  const editor = createEditor();
+  const block = editor.addWhileBlock('door');
+  assert.equal(block.type, 'while');
+  assert.equal(block.condition_id, 'door');
+  assert.equal(block.repeat_when, 'match');
+  assert.equal(block.max_iterations, 10);
+  assert.deepEqual(Array.from(block.steps), []);
+});
+
 test('script toolbar exposes controls for adding blank flow blocks', () => {
   const toolbar = html.slice(html.indexOf('<div id="script-tb">'), html.indexOf('<div id="tbl-wrap">'));
   assert.match(toolbar, /onclick="addIfElseBlock\(\)"/);
   assert.match(toolbar, /onclick="addDoWhileBlock\(\)"/);
+  assert.match(toolbar, /onclick="addWhileBlock\(\)"/);
+});
+
+test('while conditions and action children round-trip with the other control blocks', () => {
+  const editor = createEditor();
+  editor.conditions = [{ condition_id: 'while-door', name: 'Door', snapshot_id: 'snap',
+    roi: [0, 0, 1, 1], threshold: 0.9 }];
+  editor.snapshots = [{ id: 'snap', thumb_b64: 'c25hcA==' }];
+  const block = editor.addWhileBlock('while-door');
+  editor.addKbdStep();
+  const action = editor.steps.at(-1);
+  editor.moveStepToSlot(action._id, block._id, 'steps');
+  assert.doesNotThrow(() => editor.validateControlFlowNodes(editor.steps));
+  const serialized = editor.serializeEditorSteps(editor.steps);
+  assert.equal(serialized[0].type, 'while');
+  assert.equal(serialized[0].steps[0]._id, undefined);
+  const imported = editor.normalizeImportedSteps(serialized);
+  assert.equal(imported[0].type, 'while');
+  assert.notEqual(imported[0]._id, action._id);
+  assert.notEqual(imported[0].steps[0]._id, action._id);
+  editor.steps = imported;
+  assert.equal(editor.collectImgBundle().bundle.conditions[0].condition_id, 'while-door');
+  editor.exportJSON();
+  assert.equal(JSON.parse(editor.exportData.value).schema_version, 6);
+  assert.equal(editor.runtimeControlSummary({
+    params: { type: 'while', repeat_when: 'match' },
+    control: { iteration: 2, iteration_limit: 10 },
+  }), 'WHILE 2/10 | repeat on MATCH');
 });
 
 test('actions move between blocks and back to a requested top-level position', () => {
@@ -185,14 +223,18 @@ test('actions move between blocks and back to a requested top-level position', (
   const second = editor.steps[1];
   const branch = editor.addIfElseBlock();
   const repeat = editor.addDoWhileBlock();
+  const pretest = editor.addWhileBlock();
   assert.equal(repeat.repeat_when, 'match');
   assert.equal(repeat.max_iterations, 10);
+  assert.equal(pretest.type, 'while');
   editor.moveStepToSlot(action._id, branch._id, 'then_steps');
   editor.moveStepToSlot(action._id, repeat._id, 'steps');
   editor.moveStepToTopLevel(action._id, branch._id);
-  assert.deepEqual(Array.from(editor.steps.map(step => step._id)), [second._id, action._id, branch._id, repeat._id]);
+  editor.moveStepToSlot(action._id, pretest._id, 'steps');
+  editor.moveStepToTopLevel(action._id, branch._id);
+  assert.deepEqual(Array.from(editor.steps.map(step => step._id)), [second._id, action._id, branch._id, repeat._id, pretest._id]);
   assert.equal(editor.findStepLocation(action._id).step, action);
-  assert.equal(editor.steps.flatMap(step => step.type === 'do_while' ? step.steps : []).filter(step => step._id === action._id).length, 0);
+  assert.equal(editor.steps.flatMap(step => ['do_while', 'while'].includes(step.type) ? step.steps : []).filter(step => step._id === action._id).length, 0);
 });
 
 test('control slots reserve matching columns and keep action parameters on one line', () => {
@@ -215,6 +257,7 @@ test('control block delete buttons occupy the same final column as ordinary step
   const editor = createEditor();
   editor.addIfElseBlock();
   editor.addDoWhileBlock();
+  editor.addWhileBlock();
   for (const row of editor.renderedRows) {
     assert.equal(row.children[0].colSpan, 4);
     assert.equal(row.children.length, 2);
@@ -222,6 +265,59 @@ test('control block delete buttons occupy the same final column as ordinary step
     assert.match(row.children[1].innerHTML, /aria-label="Remove control block"/);
     assert.doesNotMatch(row.children[0].children[0].innerHTML, /requestBlockDelete/);
   }
+});
+
+test('each control slot has a trailing drop target that appends actions', () => {
+  const editor = createEditor();
+  const branch = editor.addIfElseBlock();
+  const repeat = editor.addDoWhileBlock();
+  const pretest = editor.addWhileBlock();
+  for (const [block, slot] of [[branch, 'then_steps'], [branch, 'else_steps'], [repeat, 'steps'], [pretest, 'steps']]) {
+    editor.addKbdStep();
+    const first = editor.steps.at(-1);
+    editor.moveStepToSlot(first._id, block._id, slot);
+    editor.addKbdStep();
+    const last = editor.steps.at(-1);
+    const row = editor.renderedRows.find(row => {
+      const panel = row.children[0]?.children[0];
+      return block.type === 'if_else'
+        ? panel?.className.includes('control-if')
+        : panel?.className.includes('control-repeat') &&
+          panel.innerHTML.includes(block.type === 'while' ? '<strong>WHILE</strong>' : '<strong>DO-WHILE</strong>');
+    });
+    const panel = row.children[0].children[0];
+    const drop = panel.children[slot === 'else_steps' ? 1 : 0];
+    const end = drop.children.at(-1);
+    assert.equal(end.className, 'control-slot-end');
+    let stopped = false;
+    end.dispatch('drop', {
+      preventDefault() {},
+      stopPropagation() { stopped = true; },
+      dataTransfer: { getData: () => String(last._id) },
+    });
+    assert.equal(stopped, true);
+    assert.deepEqual(Array.from(block[slot].map(step => step._id)), [first._id, last._id]);
+  }
+});
+
+test('condition diagnostics identify the step, score, threshold and chosen branch', () => {
+  const editor = createEditor();
+  editor.logScriptCondition({
+    step: 1, total: 2, condition_id: 'secure-boot',
+    score: 0.83123, threshold: 0.92, matched: false, branch: 'else',
+  });
+  assert.match(editor.logs.at(-1)[1], /IF 2\/2/);
+  assert.match(editor.logs.at(-1)[1], /secure-boot/);
+  assert.match(editor.logs.at(-1)[1], /0\.8312/);
+  assert.match(editor.logs.at(-1)[1], /0\.9200/);
+  assert.match(editor.logs.at(-1)[1], /NO MATCH.*ELSE/);
+  editor.logScriptCondition({
+    block_type: 'while', step: 0, total: 1, condition_id: 'while-door',
+    score: 0.95, threshold: 0.9, matched: true, branch: 'body', iteration: 2,
+  });
+  assert.match(editor.logs.at(-1)[1], /WHILE 1\/1/);
+  assert.match(editor.logs.at(-1)[1], /MATCH → BODY iteration=2/);
+  assert.match(html, /msg.type==='script_condition'[\s\S]*?logScriptCondition\(msg\)/);
 });
 
 test('control nodes cannot be moved into a slot and invalid moves are reported', () => {
@@ -865,6 +961,279 @@ function createImageMoveModal(){
   vm.runInContext(html.slice(html.indexOf('function openImageMoveModal('),html.indexOf('function syncDrawCanvas()')),editor);
   return editor;
 }
+
+function createRoiModal() {
+  const editor = createEditor();
+  const classes = new Set(['open', 'expanded']);
+  const canvasContext = {
+    clearRect() {}, strokeRect() {}, fillRect() {}, setLineDash() {},
+  };
+  const viewport = {
+    clientWidth: 960, clientHeight: 540, scrollLeft: 0, scrollTop: 0,
+    getBoundingClientRect: () => ({ left: 10, top: 20, width: 960, height: 540 }),
+  };
+  const wrap = {
+    style: {},
+    getBoundingClientRect() {
+      const width = parseFloat(this.style.width) || 960;
+      const height = parseFloat(this.style.height) || 540;
+      return {
+        left: 10 + Math.max(0, (viewport.clientWidth - width) / 2) - viewport.scrollLeft,
+        top: 20 - viewport.scrollTop, width, height,
+      };
+    },
+  };
+  const captures = new Set();
+  for (const id of ['vcm-roi-canvas', 'vcm-draw-canvas']) {
+    editor.elements[id] = {
+      width: 1920, height: 1080, style: {},
+      getContext: () => canvasContext,
+      getBoundingClientRect: () => wrap.getBoundingClientRect(),
+      setPointerCapture: id => captures.add(id),
+      hasPointerCapture: id => captures.has(id),
+      releasePointerCapture: id => captures.delete(id),
+    };
+  }
+  editor.elements['vcModal'] = {
+    classList: {
+      add: name => classes.add(name), remove: name => classes.delete(name),
+      contains: name => classes.has(name),
+      toggle(name, force) {
+        const enabled = force ?? !classes.has(name);
+        if (enabled) classes.add(name); else classes.delete(name);
+        return enabled;
+      },
+    },
+  };
+  editor.elements['vcm-snap-img'] = { naturalWidth: 1920, naturalHeight: 1080, complete: true };
+  editor.elements['vcm-snap-wrap'] = wrap;
+  editor.elements['vcm-viewport'] = viewport;
+  for (const id of ['vcm-zoom-value', 'vcm-view-info', 'vcm-expand-btn', 'vcm-select-btn', 'vcm-pan-btn']) {
+    editor.elements[id] = {
+      textContent: '', attributes: {},
+      setAttribute(name, value) { this.attributes[name] = String(value); },
+    };
+  }
+  editor.elements['vcm-roi-hint'] = { style: {} };
+  editor.ResizeObserver = class {
+    constructor(callback) { this.callback = callback; editor.resizeObserver = this; }
+    observe() {}
+    disconnect() { this.disconnected = true; }
+  };
+  Object.assign(editor, {
+    vcmRoi: null, roiDraw: { active: false, sx: 0, sy: 0, ex: 0, ey: 0 },
+    vcmImageMode: false,
+  });
+  vm.runInContext(html.slice(html.indexOf('let roiView='), html.indexOf('/* Snapshot pool */')), editor);
+  vm.runInContext(html.slice(html.indexOf('function syncDrawCanvas()'), html.indexOf('async function saveCondition()')), editor);
+  return editor;
+}
+
+test('ROI viewer fits the raw image and bounds explicit zoom without changing saved ROI', () => {
+  const editor = createRoiModal();
+  editor.resetRoiView();
+  editor.syncDrawCanvas();
+  assert.equal(editor.elements['vcm-zoom-value'].textContent, '50%');
+  editor.vcmRoi = [0.1, 0.2, 0.3, 0.4];
+  editor.drawSavedRoi(editor.vcmRoi);
+  editor.setRoiZoom(2);
+  assert.equal(editor.elements['vcm-snap-wrap'].style.width, '3840px');
+  assert.equal(editor.elements['vcm-zoom-value'].textContent, '200%');
+  assert.deepEqual(Array.from(editor.vcmRoi), [0.1, 0.2, 0.3, 0.4]);
+  editor.setRoiZoom(10);
+  assert.equal(editor.elements['vcm-zoom-value'].textContent, '400%');
+  editor.setRoiZoom(0.01);
+  assert.equal(editor.elements['vcm-zoom-value'].textContent, '10%');
+  editor.fitRoiView();
+  assert.equal(editor.elements['vcm-zoom-value'].textContent, '50%');
+});
+
+test('ROI drawing maps zoomed and scrolled coordinates back to the original normalized image', () => {
+  const editor = createRoiModal();
+  editor.resetRoiView();
+  editor.syncDrawCanvas();
+  editor.setRoiZoom(2);
+  const rect = editor.elements['vcm-draw-canvas'].getBoundingClientRect();
+  editor.roiMouseDown({ button: 0, pointerId: 7, clientX: rect.left + rect.width * 0.1, clientY: rect.top + rect.height * 0.2 });
+  editor.roiMouseUp({ pointerId: 7, clientX: rect.left + rect.width * 0.4, clientY: rect.top + rect.height * 0.6 });
+  const expected = [0.1, 0.2, 0.3, 0.4];
+  Array.from(editor.vcmRoi).forEach((value, index) => assert.ok(Math.abs(value - expected[index]) < 1e-10));
+  assert.equal(editor.elements['vcm-draw-canvas'].hasPointerCapture(7), false);
+});
+
+test('ROI pan changes only scroll offsets and ignores secondary pointers', () => {
+  const editor = createRoiModal();
+  editor.resetRoiView();
+  editor.syncDrawCanvas();
+  editor.setRoiZoom(2);
+  editor.vcmRoi = [0.1, 0.2, 0.3, 0.4];
+  editor.setRoiTool('pan');
+  const viewport = editor.elements['vcm-viewport'];
+  const initial = [viewport.scrollLeft, viewport.scrollTop];
+  editor.roiMouseDown({ button: 0, pointerId: 7, clientX: 400, clientY: 300 });
+  editor.roiMouseMove({ pointerId: 8, clientX: 350, clientY: 250 });
+  assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], initial);
+  editor.roiMouseMove({ pointerId: 7, clientX: 350, clientY: 250 });
+  editor.roiMouseUp({ pointerId: 7, clientX: 350, clientY: 250 });
+  assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [initial[0] + 50, initial[1] + 50]);
+  assert.deepEqual(Array.from(editor.vcmRoi), [0.1, 0.2, 0.3, 0.4]);
+  assert.equal(editor.roiDraw.active, false);
+});
+
+test('ROI fit resize and expanded toggle preserve selection and explicit zoom', () => {
+  const editor = createRoiModal();
+  editor.resetRoiView();
+  editor.syncDrawCanvas();
+  editor.vcmRoi = [0.2, 0.3, 0.4, 0.5];
+  editor.drawSavedRoi(editor.vcmRoi);
+  editor.elements['vcm-viewport'].clientWidth = 480;
+  editor.resizeObserver.callback();
+  assert.equal(editor.elements['vcm-zoom-value'].textContent, '25%');
+  editor.setRoiZoom(1);
+  editor.toggleRoiExpanded();
+  editor.resizeObserver.callback();
+  assert.equal(editor.elements['vcm-zoom-value'].textContent, '100%');
+  assert.deepEqual(Array.from(editor.vcmRoi), [0.2, 0.3, 0.4, 0.5]);
+  assert.equal(editor.elements['vcm-expand-btn'].attributes['aria-pressed'], 'false');
+});
+
+test('ROI Fit shows the full high-resolution image even in a narrow viewport', () => {
+  const editor = createRoiModal();
+  editor.elements['vcm-snap-img'].naturalWidth = 7680;
+  editor.elements['vcm-snap-img'].naturalHeight = 4320;
+  editor.elements['vcm-viewport'].clientWidth = 320;
+  editor.resetRoiView();
+  editor.syncDrawCanvas();
+  assert.ok(parseFloat(editor.elements['vcm-snap-wrap'].style.width) <= 320);
+});
+
+test('ROI wheel zoom requires Ctrl and keeps the image point under the cursor', () => {
+  const editor = createRoiModal();
+  editor.resetRoiView();
+  editor.syncDrawCanvas();
+  let prevented = false;
+  const event = { ctrlKey: false, deltaY: -1, clientX: 400, clientY: 250, preventDefault() { prevented = true; } };
+  editor.roiWheel(event);
+  assert.equal(prevented, false);
+  const before = editor.elements['vcm-snap-wrap'].getBoundingClientRect();
+  const point = [(event.clientX - before.left) / before.width, (event.clientY - before.top) / before.height];
+  event.ctrlKey = true;
+  editor.roiWheel(event);
+  const after = editor.elements['vcm-snap-wrap'].getBoundingClientRect();
+  assert.equal(prevented, true);
+  assert.ok(Math.abs((event.clientX - after.left) / after.width - point[0]) < 1e-10);
+  assert.ok(Math.abs((event.clientY - after.top) / after.height - point[1]) < 1e-10);
+});
+
+test('ROI cancellation restores the saved selection and reopening resets the viewer', () => {
+  const editor = createRoiModal();
+  editor.resetRoiView();
+  editor.syncDrawCanvas();
+  editor.vcmRoi = [0.1, 0.2, 0.3, 0.4];
+  editor.drawSavedRoi(editor.vcmRoi);
+  editor.roiMouseDown({ button: 0, pointerId: 7, clientX: 80, clientY: 90 });
+  editor.roiMouseMove({ pointerId: 7, clientX: 250, clientY: 300 });
+  editor.cancelRoiGesture();
+  assert.deepEqual(Array.from(editor.vcmRoi), [0.1, 0.2, 0.3, 0.4]);
+  assert.equal(editor.roiDraw.sx, 0.1);
+  assert.equal(editor.roiDraw.active, false);
+  editor.setRoiZoom(2);
+  editor.setRoiTool('pan');
+  editor.resetRoiView();
+  assert.equal(editor.elements['vcm-pan-btn'].attributes['aria-pressed'], 'false');
+  assert.equal(editor.elements['vcModal'].classList.contains('expanded'), true);
+  assert.equal(editor.elements['vcm-zoom-value'].textContent, '50%');
+});
+
+test('ROI modal exposes zoom and pan in a responsive dialog with a fixed footer', () => {
+  const markup = html.slice(html.indexOf('<!-- Condition creation modal -->'));
+  for (const id of ['vcm-viewport', 'vcm-zoom-value', 'vcm-expand-btn', 'vcm-select-btn', 'vcm-pan-btn']) {
+    assert.ok(markup.includes(`id="${id}"`), id);
+  }
+  assert.match(markup, /role="dialog"/);
+  assert.match(markup, /onwheel="roiWheel\(event\)"/);
+  assert.match(markup, /onpointercancel="cancelRoiGesture\(\)"/);
+  assert.match(html, /#vcModal\.expanded #vcModal-box/);
+  assert.match(html, /@media\s*\(max-width:\s*800px\)/);
+});
+
+test('ROI modal close disconnects resize tracking and discards stale image callbacks', () => {
+  const editor = createRoiModal();
+  Object.assign(editor, {
+    ocrTestRevision: 0, ocrTestController: null, vcmOcrStepId: null,
+    vcmImageStepId: null, vcmImageConfig: null, vcmImageDirty: false,
+  });
+  editor.elements['vcm-ocr-test'] = { disabled: true };
+  editor.elements['vcm-submit-btn'] = { disabled: true };
+  editor.resetRoiView();
+  const observer = editor.resizeObserver;
+  const img = editor.elements['vcm-snap-img'];
+  img.onload = () => {};
+  img.onerror = () => {};
+  vm.runInContext(html.slice(html.indexOf('function closeCondModal()'), html.indexOf('function setRoiModalMode(')), editor);
+  editor.closeCondModal();
+  assert.equal(observer.disconnected, true);
+  assert.equal(img.onload, null);
+  assert.equal(img.onerror, null);
+  assert.equal(editor.elements['vcModal'].classList.contains('open'), false);
+  assert.equal(editor.vcmRoi, null);
+});
+
+test('ROI viewer reports image-load failures and rejects invalid zoom', () => {
+  const editor = createRoiModal();
+  editor.resetRoiView();
+  editor.roiSnapshotError();
+  assert.match(editor.elements['vcm-view-info'].textContent, /Snapshot unavailable/);
+  assert.match(editor.logs.at(-1)[1], /could not be loaded/);
+  assert.equal(editor.setRoiZoom(NaN), false);
+  assert.match(editor.logs.at(-1)[1], /Invalid ROI zoom/);
+  editor.elements['vcm-snap-img'].naturalWidth = 0;
+  assert.equal(editor.setRoiZoom(2), false);
+  assert.match(editor.logs.at(-1)[1], /not loaded/);
+});
+
+test('ROI viewer cannot select against an unloaded snapshot', () => {
+  const editor = createRoiModal();
+  editor.resetRoiView();
+  editor.elements['vcm-snap-img'].naturalWidth = 0;
+  editor.roiMouseDown({ button: 0, pointerId: 7, clientX: 100, clientY: 100 });
+  editor.roiMouseUp({ pointerId: 7, clientX: 300, clientY: 250 });
+  assert.equal(editor.vcmRoi, null);
+  assert.equal(editor.elements['vcm-draw-canvas'].hasPointerCapture(7), false);
+  assert.match(editor.logs.at(-1)[1], /not loaded/);
+});
+
+test('ROI image target changes only when a new selection is committed', () => {
+  const editor = createRoiModal();
+  editor.resetRoiView();
+  editor.vcmImageMode = true;
+  let changes = 0;
+  editor.imageTargetChanged = () => { changes++; };
+  editor.setRoiZoom(2);
+  editor.fitRoiView();
+  assert.equal(changes, 0);
+  editor.roiMouseDown({ button: 0, pointerId: 7, clientX: 100, clientY: 100 });
+  editor.roiMouseUp({ pointerId: 7, clientX: 300, clientY: 250 });
+  assert.equal(changes, 1);
+  editor.setRoiTool('pan');
+  editor.roiMouseDown({ button: 0, pointerId: 8, clientX: 100, clientY: 100 });
+  editor.roiMouseUp({ pointerId: 8, clientX: 150, clientY: 200 });
+  assert.equal(changes, 1);
+});
+
+test('saving an edited condition after Clear ROI requires a replacement region', async () => {
+  const editor = createEditor();
+  Object.assign(editor, { vcmEditCid: 'condition', vcmRoi: null });
+  for (const [id, value] of Object.entries({
+    'vcm-name': 'Condition', 'vcm-thr': '92', 'vcm-hits': '3', 'vcm-cool': '3000',
+  })) editor.elements[id] = { value };
+  const alerts = [];
+  editor.alert = message => alerts.push(message);
+  vm.runInContext(html.slice(html.indexOf('async function saveCondition()'), html.indexOf('async function createCondition()')), editor);
+  await editor.saveCondition();
+  assert.equal(editor.fetchCalls.length, 0);
+  assert.match(alerts[0], /draw an ROI/i);
+});
 
 test('a stale template response cannot replace a newly selected image target',async()=>{
   const editor=createImageMoveModal();

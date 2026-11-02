@@ -261,6 +261,39 @@ class ScriptControlFlowValidationTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             main.MixedScriptRequest.model_validate({"steps": [{"type": "unknown"}]})
 
+    def test_while_control_node_requires_condition_body_direction_and_bounded_limit(self):
+        request = main.MixedScriptRequest.model_validate({
+            "steps": [{
+                "type": "while", "condition_id": "door",
+                "repeat_when": "match", "max_iterations": 4,
+                "steps": [{"type": "kbd", "key": "ENTER"}],
+            }]
+        })
+        self.assertIsInstance(request.steps[0], main.WhileBlock)
+        self.assertEqual(request.steps[0].max_iterations, 4)
+        for node in (
+            {"type": "while", "condition_id": "door", "steps": [{"type": "kbd"}]},
+            {"type": "while", "condition_id": "door", "repeat_when": "match", "steps": []},
+            {"type": "while", "condition_id": "door", "repeat_when": "sometimes", "steps": [{"type": "kbd"}]},
+            {"type": "while", "condition_id": "door", "repeat_when": "match", "max_iterations": 10001, "steps": [{"type": "kbd"}]},
+        ):
+            with self.subTest(node=node), self.assertRaises(ValidationError):
+                main.MixedScriptRequest.model_validate({"steps": [node]})
+
+    def test_while_is_included_in_action_and_condition_discovery(self):
+        request = main.MixedScriptRequest.model_validate({
+            "steps": [{
+                "type": "while", "condition_id": "loop",
+                "repeat_when": "not_match", "steps": [
+                    {"type": "srv", "servo_id": 3},
+                    {"type": "evt", "evt": "IMG.MATCH.nested"},
+                ],
+            }]
+        })
+        self.assertEqual([step.type for step in main._iter_action_steps(request.steps)],
+                         ["srv", "evt"])
+        self.assertEqual(main._collect_condition_ids(request.steps), ["loop", "nested"])
+
     def test_nested_empty_invalid_and_over_limit_blocks_are_rejected(self):
         action = {"type": "kbd"}
         invalid_payloads = [
@@ -478,15 +511,16 @@ class ScriptBundleImportTests(unittest.IsolatedAsyncioTestCase):
     def legacy_gate_steps(slot, gate):
         if slot == "top":
             return [gate]
-        if slot == "steps":
-            return [{"type": "do_while", "condition_id": "control",
-                     "repeat_when": "match", "steps": [gate]}]
+        if slot in {"steps", "while"}:
+            return [{"type": "do_while" if slot == "steps" else "while",
+                     "condition_id": "control", "repeat_when": "match",
+                     "steps": [gate]}]
         return [{"type": "if_else", "condition_id": "control",
                  "then_steps": [gate] if slot == "then_steps" else [],
                  "else_steps": [gate] if slot == "else_steps" else []}]
 
     def test_collects_legacy_image_gates_in_every_allowed_slot(self):
-        for slot in ("top", "then_steps", "else_steps", "steps"):
+        for slot in ("top", "then_steps", "else_steps", "steps", "while"):
             with self.subTest(slot=slot):
                 request = main.MixedScriptRequest.model_validate({
                     "steps": self.legacy_gate_steps(
@@ -496,7 +530,7 @@ class ScriptBundleImportTests(unittest.IsolatedAsyncioTestCase):
                                  ["old"] if slot == "top" else ["control", "old"])
 
     async def test_import_remaps_legacy_image_gates_before_normalization(self):
-        for slot in ("top", "then_steps", "else_steps", "steps"):
+        for slot in ("top", "then_steps", "else_steps", "steps", "while"):
             with self.subTest(slot=slot):
                 request = main.ScriptBundleImportRequest.model_validate({
                     "steps": self.legacy_gate_steps(slot, {
@@ -524,7 +558,8 @@ class ScriptBundleImportTests(unittest.IsolatedAsyncioTestCase):
                 expected = request.steps[0].model_dump()
                 if slot != "top":
                     expected["condition_id"] = "new-control"
-                gate = expected if slot == "top" else expected[slot][0]
+                slot_name = "steps" if slot == "while" else slot
+                gate = expected if slot == "top" else expected[slot_name][0]
                 gate["evt"] = "IMG.MATCH.new-old"
                 self.assertEqual(result["steps"], [expected, request.steps[1].model_dump()])
                 self.assertEqual(request.model_dump(), original)
@@ -538,7 +573,7 @@ class ScriptBundleImportTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(actions[2].evt, "READY")
 
     async def test_import_rejects_missing_legacy_gate_reference_before_side_effects(self):
-        for slot in ("top", "then_steps", "else_steps", "steps"):
+        for slot in ("top", "then_steps", "else_steps", "steps", "while"):
             with self.subTest(slot=slot):
                 request = main.ScriptBundleImportRequest.model_validate({
                     "steps": self.legacy_gate_steps(
@@ -577,6 +612,9 @@ class ScriptBundleImportTests(unittest.IsolatedAsyncioTestCase):
                                 {"type": "evt", "evt": "READY"}]},
                 {"type": "do_while", "condition_id": "old-image",
                  "repeat_when": "match", "steps": [{"type": "evt", "evt": "IMG.MATCH.old-door"}]},
+                {"type": "while", "condition_id": "old-door",
+                 "repeat_when": "not_match", "max_iterations": 4,
+                 "steps": [{"type": "evt", "evt": "IMG.MATCH.old-image"}]},
             ],
             "img_bundle": {
                 "snapshots": [{"snapshot_id": "old-snapshot", "jpeg_b64": "c25hcA=="}],
@@ -602,6 +640,8 @@ class ScriptBundleImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["steps"][0]["else_steps"][1]["evt"], "READY")
         self.assertEqual(result["steps"][1]["condition_id"], "new-image")
         self.assertEqual(result["steps"][1]["steps"][0]["evt"], "IMG.MATCH.new-door")
+        self.assertEqual(result["steps"][2]["condition_id"], "new-door")
+        self.assertEqual(result["steps"][2]["steps"][0]["evt"], "IMG.MATCH.new-image")
 
     async def test_import_rejects_references_absent_from_bundle(self):
         request = main.ScriptBundleImportRequest.model_validate({
@@ -686,6 +726,117 @@ class MixedScriptExecutionTests(unittest.IsolatedAsyncioTestCase):
                 item = self.runtime.detail(job_id)["steps"][0]
                 self.assertEqual(item["control"]["branch"], branch)
                 self.assertIs(item["control"]["condition_match"], matched)
+
+    async def test_while_checks_before_body_and_skips_body_on_initial_nonmatch(self):
+        for mode, decisions, expected_actions in (
+            ("match", [False], 0),
+            ("not_match", [True], 0),
+            ("match", [True, False], 1),
+            ("not_match", [False, True], 1),
+            ("match", [True, True, False], 2),
+        ):
+            with self.subTest(mode=mode, decisions=decisions):
+                run_action = AsyncMock()
+                job_id, _ = await self.execute({
+                    "steps": [
+                        {"type": "while", "condition_id": "door",
+                         "repeat_when": mode, "max_iterations": 3,
+                         "steps": [{"type": "kbd", "cmd_type": "TYPE",
+                                    "text": "body"}]},
+                        {"type": "kbd", "cmd_type": "TYPE", "text": "after"},
+                    ]
+                }, run_action, [(0.95, decision) for decision in decisions])
+                self.assertEqual(run_action.await_count, expected_actions + 1)
+                self.assertEqual(
+                    [call.args[0].text for call in run_action.await_args_list],
+                    ["body"] * expected_actions + ["after"])
+                self.assertEqual(
+                    self.runtime.detail(job_id)["steps"][0]["control"]["iteration"],
+                    expected_actions)
+
+    async def test_while_iteration_limit_fails_only_if_next_body_is_required(self):
+        for decisions, should_fail in (([True, True], True), ([True, False], False)):
+            with self.subTest(decisions=decisions):
+                run_action = AsyncMock()
+                request = main.MixedScriptRequest.model_validate({
+                    "steps": [{
+                        "type": "while", "condition_id": "door",
+                        "repeat_when": "match", "max_iterations": 1,
+                        "steps": [{"type": "kbd", "text": "body"}],
+                    }]
+                })
+                main._register_runtime_job(request)
+                self.runtime.activate(request.job_id)
+                with patch.object(main, "_run_action_step", run_action), \
+                     patch.object(main, "_evaluate_condition_fresh",
+                                  new_callable=AsyncMock,
+                                  side_effect=[(0.95, value) for value in decisions]):
+                    if should_fail:
+                        with self.assertRaisesRegex(RuntimeError, r"iteration limit reached \(1\)"):
+                            await main._run_mixed_script(request)
+                    else:
+                        await main._run_mixed_script(request)
+                self.assertEqual(run_action.await_count, 1)
+
+    async def test_while_exit_preserves_the_last_body_child_status(self):
+        async def run_action(step, *, top_index, variables, slot, child_index):
+            self.runtime.start_child_step(top_index, slot, child_index)
+            self.runtime.complete_child_step(
+                top_index, slot, child_index, result={"sent": step.type})
+
+        job_id, _ = await self.execute({
+            "steps": [{
+                "type": "while", "condition_id": "door", "repeat_when": "match",
+                "max_iterations": 3,
+                "steps": [{"type": "kbd", "cmd_type": "TYPE", "text": "body"}],
+            }]
+        }, run_action, [(0.95, True), (0.95, False)])
+
+        item = self.runtime.detail(job_id)["steps"][0]
+        self.assertEqual(item["state"], "completed")
+        self.assertEqual(item["control"]["iteration"], 1)
+        self.assertEqual(item["children"]["steps"][0]["state"], "completed")
+        self.assertEqual(item["children"]["steps"][0]["result"], {"sent": "kbd"})
+
+    async def test_consecutive_if_blocks_execute_selected_actions_in_order(self):
+        for decisions in ((True, True), (True, False), (False, True), (False, False)):
+            with self.subTest(decisions=decisions):
+                request = main.MixedScriptRequest.model_validate({
+                    "steps": [
+                        {"type": "if_else", "condition_id": f"door-{index}",
+                         "then_steps": [{"type": "kbd", "cmd_type": "TYPE",
+                                         "text": f"then-{index}"}],
+                         "else_steps": [{"type": "kbd", "cmd_type": "TYPE",
+                                         "text": f"else-{index}"}]}
+                        for index in range(2)
+                    ] + [{"type": "kbd", "cmd_type": "TYPE", "text": "after"}]
+                })
+                main._register_runtime_job(request)
+                self.runtime.activate(request.job_id)
+                with patch.object(main, "_evaluate_condition_fresh",
+                                  new_callable=AsyncMock,
+                                  side_effect=[(0.95, decision) for decision in decisions]) as evaluate, \
+                     patch.object(main, "_send_kbm_command",
+                                  new_callable=AsyncMock, return_value="OK") as send:
+                    await main._run_mixed_script(request)
+                self.assertEqual(
+                    [call.args[0] for call in evaluate.await_args_list],
+                    ["door-0", "door-1"])
+                self.assertEqual(
+                    [call.args[0] for call in send.await_args_list],
+                    [f"TYPE:{'then' if decision else 'else'}-{index}"
+                     for index, decision in enumerate(decisions)] + ["TYPE:after"])
+                reports = [call.args[0] for call in main.kbm_ws.broadcast.await_args_list
+                           if call.args[0]["type"] == "script_condition"]
+                self.assertEqual(
+                    [(report["condition_id"], report["score"], report["matched"],
+                      report["branch"]) for report in reports[-2:]],
+                    [(f"door-{index}", 0.95, decision,
+                      "then" if decision else "else")
+                     for index, decision in enumerate(decisions)])
+                self.assertEqual(
+                    [item["state"] for item in self.runtime.detail(request.job_id)["steps"]],
+                    ["completed"] * 3)
 
     async def test_do_while_runs_once_then_repeats_using_each_repeat_mode(self):
         for mode, conditions, max_iterations, expected_iterations in (

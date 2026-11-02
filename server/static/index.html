@@ -170,6 +170,8 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
 .control-head input[type=number]{width:64px}
 .control-slot{border:1px dashed var(--bd);border-left:2px solid var(--grn2);margin:5px 0 3px 14px;padding:3px 4px;min-height:28px;background:rgba(34,197,94,.025)}
 .control-slot-label{font-family:var(--mono);font-size:9px;color:var(--fg3)}
+.control-slot-end{min-height:24px;padding:5px 4px;margin-top:3px;border:1px dashed var(--bd);font-family:var(--mono);font-size:9px;color:var(--fg3);text-align:center}
+.control-slot-end.drag-over{border-color:var(--grn2);background:var(--hov)}
 .control-slot-table{margin-top:2px}
 .control-slot-table td{white-space:nowrap}
 .control-slot-table .step-params{display:flex;align-items:center;gap:2px;overflow-x:auto}
@@ -294,18 +296,32 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
 /* condition creation modal */
 #vcModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:center;justify-content:center}
 #vcModal.open{display:flex}
-#vcModal-box{background:var(--panel);border:1px solid var(--br);border-radius:6px;width:min(520px,92vw);display:flex;flex-direction:column;overflow:hidden;max-height:90vh}
+#vcModal-box{background:var(--panel);border:1px solid var(--br);border-radius:6px;width:min(720px,92vw);height:min(720px,90vh);display:flex;flex-direction:column;overflow:hidden;max-height:90vh}
+#vcModal.expanded #vcModal-box{width:92vw;height:90vh}
 #vcModal [hidden]{display:none!important}
 .vcm-hdr{background:var(--card);padding:8px 12px;border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--fg2);display:flex;align-items:center;gap:8px;flex-shrink:0}
-.vcm-body{padding:10px 12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1}
-.vcm-snap-wrap{position:relative;width:100%;background:#000;border-radius:4px;overflow:hidden;flex-shrink:0}
+.vcm-body{padding:10px 12px;display:grid;grid-template-columns:minmax(0,1fr) 230px;gap:12px;overflow:hidden;flex:1;min-height:0}
+.vcm-image-panel{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}
+.vcm-toolbar{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.vcm-toolbar output{font-family:var(--mono);font-size:10px;color:var(--tel);min-width:36px;text-align:center}
+.vcm-toolbar button[aria-pressed="true"]{border-color:var(--tel);color:var(--tel)}
+#vcm-viewport{overflow:auto;overscroll-behavior:contain;background:#000;border:1px solid var(--bd);border-radius:4px;min-height:0;flex:1}
+.vcm-snap-wrap{position:relative;background:#000;overflow:hidden;margin:0 auto}
 .vcm-snap-wrap img{display:block;width:100%;height:auto;user-select:none;-webkit-user-drag:none}
 #vcm-roi-canvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
 #vcm-draw-canvas{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
+.vcm-settings{display:flex;flex-direction:column;gap:10px;overflow-y:auto;min-width:0;min-height:0;border-left:1px solid var(--bd);padding-left:12px}
+.vcm-settings input{min-width:0}
+#vcm-view-info{font-family:var(--mono);font-size:10px;color:var(--fg3);overflow-wrap:anywhere;min-height:14px}
 .vcm-row{display:flex;align-items:center;gap:8px}
 .vcm-lbl{font-family:var(--mono);font-size:10px;color:var(--fg2);width:100px;flex-shrink:0}
 .vcm-ftr{padding:8px 12px;border-top:1px solid var(--bd);display:flex;gap:6px;justify-content:flex-end;flex-shrink:0;background:var(--card)}
 .vcm-hint{font-family:var(--mono);font-size:9px;color:var(--fg3);padding:3px 0}
+@media(max-width:800px){
+  .vcm-body{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(130px,1fr) auto;gap:8px}
+  .vcm-settings{max-height:25vh;border-left:0;border-top:1px solid var(--bd);padding:8px 0 0}
+  .vcm-hdr{flex-wrap:wrap;letter-spacing:0}
+}
 /* IMG step picker */
 #img-picker{position:fixed;background:var(--card);border:1px solid var(--br);border-radius:var(--r);padding:4px;box-shadow:0 8px 20px rgba(0,0,0,.5);z-index:9999;display:none;flex-direction:column;gap:2px;min-width:210px;max-height:180px;overflow-y:auto}
 #img-picker.show{display:flex}
@@ -499,6 +515,7 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
     <button class="btn-t btn-sm" id="add-img-btn" onclick="toggleImgPicker(event)">＋ IMG</button>
     <button class="btn-a btn-sm" onclick="addIfElseBlock()">＋ IF / ELSE</button>
     <button class="btn-a btn-sm" onclick="addDoWhileBlock()">＋ DO-WHILE</button>
+    <button class="btn-a btn-sm" onclick="addWhileBlock()">＋ WHILE</button>
     <div style="width:1px;height:12px;background:var(--bd);margin:0 2px"></div>
     <div style="display:flex;align-items:center;gap:3px;font-family:var(--mono);font-size:9px;color:var(--fg3)">
       ms:<input type="number" id="default-delay" value="1000" min="0" max="30000" step="500"
@@ -950,6 +967,13 @@ function deleteServoAction(idEncoded){
 function getDefaultDelay(){return parseInt(document.getElementById('default-delay').value)||1000;}
 const KBD_SPECIAL_KEYS=['ENTER','ESC','TAB','DELETE','UP','DOWN','LEFT','RIGHT','HOME','END','PAGEUP','PAGEDOWN','F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12'];
 
+function logScriptCondition(msg){
+  const score=Number.isFinite(msg.score)?msg.score.toFixed(4):'unavailable';
+  const threshold=Number.isFinite(msg.threshold)?msg.threshold.toFixed(4):'unavailable';
+  const block=msg.block_type==='do_while'?'DO-WHILE':msg.block_type==='while'?'WHILE':'IF';
+  const iteration=msg.iteration==null?'':` iteration=${msg.iteration}`;
+  addLog('kbm',`${block} ${msg.step+1}/${msg.total} ${msg.condition_id}: score=${score} threshold=${threshold} ${msg.matched?'MATCH':'NO MATCH'} → ${msg.branch.toUpperCase()}${iteration}`,'cevt');
+}
 function reportEditorError(message){addLog('srv','✘ '+message,'cerr');return false;}
 function addIfElseBlock(conditionId=""){
   const block={type:'if_else',_id:++stepIdCnt,condition_id:conditionId,then_steps:[],else_steps:[]};
@@ -959,11 +983,15 @@ function addDoWhileBlock(conditionId=""){
   const block={type:'do_while',_id:++stepIdCnt,condition_id:conditionId,repeat_when:'match',max_iterations:10,steps:[]};
   steps.push(block);renderSteps();return block;
 }
+function addWhileBlock(conditionId=""){
+  const block={type:'while',_id:++stepIdCnt,condition_id:conditionId,repeat_when:'match',max_iterations:10,steps:[]};
+  steps.push(block);renderSteps();return block;
+}
 function findStepLocation(stepId){
   for(let index=0;index<steps.length;index++){
     const node=steps[index];
     if(node._id===stepId)return {list:steps,index,step:node};
-    const slots=node.type==='if_else'?['then_steps','else_steps']:node.type==='do_while'?['steps']:[];
+    const slots=node.type==='if_else'?['then_steps','else_steps']:['do_while','while'].includes(node.type)?['steps']:[];
     for(const slot of slots){
       const list=node[slot]||[],childIndex=list.findIndex(item=>item._id===stepId);
       if(childIndex>=0)return {list,index:childIndex,step:list[childIndex],parent:node,slot};
@@ -974,8 +1002,8 @@ function findStepLocation(stepId){
 function moveStepToSlot(stepId,blockId,slot,beforeStepId=null){
   const source=findStepLocation(stepId),destination=findStepLocation(blockId);
   if(!source)return reportEditorError('Cannot move a missing script step.');
-  if(!destination||!['if_else','do_while'].includes(destination.step.type))return reportEditorError('Cannot move into a missing control block.');
-  if(source.step.type==='if_else'||source.step.type==='do_while')return reportEditorError('Control blocks cannot be nested.');
+  if(!destination||!['if_else','do_while','while'].includes(destination.step.type))return reportEditorError('Cannot move into a missing control block.');
+  if(['if_else','do_while','while'].includes(source.step.type))return reportEditorError('Control blocks cannot be nested.');
   const allowed=destination.step.type==='if_else'?['then_steps','else_steps']:['steps'];
   if(!allowed.includes(slot))return reportEditorError('Unknown control-block slot.');
   if(source.step._id===blockId)return reportEditorError('A block cannot be moved into itself.');
@@ -1001,17 +1029,17 @@ function moveStepToTopLevel(stepId,beforeStepId=null){
 }
 function updateControlBlock(id,key,value){
   const location=findStepLocation(id),block=location?.step;
-  if(!block||!['if_else','do_while'].includes(block.type))return reportEditorError('Control block no longer exists.');
+  if(!block||!['if_else','do_while','while'].includes(block.type))return reportEditorError('Control block no longer exists.');
   if(key==='condition_id')block.condition_id=value;
-  else if(block.type==='do_while'&&key==='repeat_when'&&['match','not_match'].includes(value))block.repeat_when=value;
-  else if(block.type==='do_while'&&key==='max_iterations')block.max_iterations=value===''?'':Number(value);
+  else if(['do_while','while'].includes(block.type)&&key==='repeat_when'&&['match','not_match'].includes(value))block.repeat_when=value;
+  else if(['do_while','while'].includes(block.type)&&key==='max_iterations')block.max_iterations=value===''?'':Number(value);
   else return reportEditorError('Invalid control-block setting.');
   renderSteps();return true;
 }
 let pendingBlockDeleteId=null;
 function requestBlockDelete(blockId){
   const location=findStepLocation(blockId);
-  if(!location||!['if_else','do_while'].includes(location.step.type))return reportEditorError('Control block no longer exists.');
+  if(!location||!['if_else','do_while','while'].includes(location.step.type))return reportEditorError('Control block no longer exists.');
   pendingBlockDeleteId=blockId;
   const dialog=document.getElementById('block-delete-dialog');
   if(dialog){dialog.hidden=false;dialog.innerHTML=`<div class="block-delete-card" role="dialog" aria-modal="true" aria-labelledby="block-delete-title">
@@ -1031,7 +1059,7 @@ function resolveBlockDelete(choice){
   if(dialog){dialog.hidden=true;dialog.innerHTML='';}
   if(choice==='cancel')return true;
   const location=findStepLocation(id);
-  if(!location||!['if_else','do_while'].includes(location.step.type))return reportEditorError('Control block no longer exists.');
+  if(!location||!['if_else','do_while','while'].includes(location.step.type))return reportEditorError('Control block no longer exists.');
   const block=location.step;
   if(choice==='unwrap'){
     const children=block.type==='if_else'?[...block.then_steps,...block.else_steps]:[...block.steps];
@@ -1054,6 +1082,12 @@ function validateControlFlowNodes(nodes){
       if(!['match','not_match'].includes(node.repeat_when))throw new Error('Choose a valid DO-WHILE repeat direction.');
       if(!Number.isInteger(node.max_iterations)||node.max_iterations<1||node.max_iterations>10000)throw new Error('DO-WHILE limit must be from 1 to 10000.');
       actionCount+=node.steps.length;
+    } else if(node.type==='while'){
+      if(!node.condition_id||!conditions.some(condition=>condition.condition_id===node.condition_id))throw new Error('Choose a valid Condition for WHILE.');
+      if(!node.steps?.length)throw new Error('WHILE needs at least one step.');
+      if(!['match','not_match'].includes(node.repeat_when))throw new Error('Choose a valid WHILE repeat direction.');
+      if(!Number.isInteger(node.max_iterations)||node.max_iterations<1||node.max_iterations>10000)throw new Error('WHILE limit must be from 1 to 10000.');
+      actionCount+=node.steps.length;
     } else actionCount++;
     if(actionCount>200)throw new Error('A script can contain at most 200 action steps.');
   }
@@ -1064,6 +1098,7 @@ function serializeEditorSteps(nodes){
       return {...node,then_steps:serializeEditorSteps(node.then_steps||[]),else_steps:serializeEditorSteps(node.else_steps||[])};
     }
     if(node.type==='do_while')return {...node,steps:serializeEditorSteps(node.steps||[])};
+    if(node.type==='while')return {...node,steps:serializeEditorSteps(node.steps||[])};
     return node;
   });
 }
@@ -1105,7 +1140,7 @@ function getOcrVariables(beforeId){
     else if(node.type==='if_else'){
       const thenNames=listOcrVariables(node.then_steps),elseNames=new Set(listOcrVariables(node.else_steps));
       available.push(...thenNames.filter(name=>elseNames.has(name)));
-    } else if(node.type==='do_while')available.push(...listOcrVariables(node.steps));
+    } else if(['do_while','while'].includes(node.type))available.push(...listOcrVariables(node.steps));
   });
   if(location.parent)available.push(...listOcrVariables(location.list.slice(0,location.index)));
   return [...new Set(available.filter(name=>typeof name==='string'&&/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(name)))];
@@ -1141,7 +1176,7 @@ function clearAllSteps(){steps=[];renderSteps();}
 function delStep(id){
   const location=findStepLocation(id);
   if(!location)return reportEditorError('Script step no longer exists.');
-  if(location.step.type==='if_else'||location.step.type==='do_while')return requestBlockDelete(id);
+  if(['if_else','do_while','while'].includes(location.step.type))return requestBlockDelete(id);
   location.list.splice(location.index,1);renderSteps();return true;
 }
 
@@ -1327,6 +1362,11 @@ function runtimeControlSummary(item){
     if(control.condition_match==null)return 'IF pending';
     return `IF ${control.condition_match?'MATCH → THEN':'NO MATCH → ELSE'}`;
   }
+  if(params.type==='while'){
+    if(control.iteration==null)return 'WHILE pending';
+    const repeat=params.repeat_when==='not_match'?'NO MATCH':'MATCH';
+    return `WHILE ${control.iteration}/${control.iteration_limit} | repeat on ${repeat}`;
+  }
   if(control.iteration==null)return 'DO-WHILE pending';
   const repeat=params.repeat_when==='not_match'?'NO MATCH':'MATCH';
   return `DO-WHILE ${control.iteration}/${control.iteration_limit} | repeat on ${repeat}`;
@@ -1361,7 +1401,7 @@ function renderRuntimeProgress(detail){
     const slot=control.branch+'_steps',children=current.children?.[slot]||[];
     const activeIndex=children.findIndex(child=>child.state==='active');
     if(activeIndex>=0)childProgress=' | '+control.branch.toUpperCase()+' action '+(activeIndex+1)+' / '+children.length;
-  }else if(params.type==='do_while'){
+  }else if(params.type==='do_while'||params.type==='while'){
     const children=current.children?.steps||[];
     const activeIndex=children.findIndex(child=>child.state==='active');
     if(activeIndex>=0)childProgress=' | BODY action '+(activeIndex+1)+' / '+children.length;
@@ -1427,9 +1467,10 @@ function renderRuntimeDetail(detail){
   }).join('');
   const marks={active:'&#9654;',completed:'&#10003;',failed:'!',pending:'&#183;'};
   const rows=items.map((step,index)=>{
-    if(step.params.type==='if_else'||step.params.type==='do_while'){
+    if(step.params.type==='if_else'||step.params.type==='do_while'||step.params.type==='while'){
       const summary=runtimeControlSummary(step);
-      return `<tr data-runtime-state="${esc(step.state)}"${index===currentIndex?' aria-current="step"':''}><td class="runtime-mark-cell"><span class="runtime-mark" title="Step ${index+1}: ${esc(step.state)}">${marks[step.state]||'&#183;'}</span></td><td><span class="badge b-evt">${step.params.type==='if_else'?'IF / ELSE':'DO-WHILE'}</span></td><td>${runtimeValue(step.params.delay_ms??0,String(step.params.delay_ms??0)+'ms',38)}</td><td><strong>${esc(summary)}</strong> | Condition ${runtimeValue(step.params.condition_id||'','Condition',null,true)}</td></tr>${runtimeControlRows(step)}`;
+      const label=step.params.type==='if_else'?'IF / ELSE':step.params.type==='while'?'WHILE':'DO-WHILE';
+      return `<tr data-runtime-state="${esc(step.state)}"${index===currentIndex?' aria-current="step"':''}><td class="runtime-mark-cell"><span class="runtime-mark" title="Step ${index+1}: ${esc(step.state)}">${marks[step.state]||'&#183;'}</span></td><td><span class="badge b-evt">${label}</span></td><td>${runtimeValue(step.params.delay_ms??0,String(step.params.delay_ms??0)+'ms',38)}</td><td><strong>${esc(summary)}</strong> | Condition ${runtimeValue(step.params.condition_id||'','Condition',null,true)}</td></tr>${runtimeControlRows(step)}`;
     }
     const row=`<tr data-runtime-state="${esc(step.state)}"${index===currentIndex?' aria-current="step"':''}><td class="runtime-mark-cell"><span class="runtime-mark" title="Step ${index+1}: ${esc(step.state)}">${marks[step.state]||'&#183;'}</span></td><td>${runtimeTypeBadge(step.params)}</td><td>${runtimeValue(step.params.delay_ms??0,String(step.params.delay_ms??0)+'ms',38)}</td><td><div class="runtime-fields">${runtimeStepFields(step.params)}</div></td></tr>`;
     if(index!==currentIndex)return row;
@@ -1470,17 +1511,17 @@ async function refreshRuntimeDetail(){
 function normalizeImportedSteps(rawSteps){
   const out=[];
   (rawSteps||[]).forEach(step=>{
-    if(step.type==='if_else'||step.type==='do_while'){
+    if(step.type==='if_else'||step.type==='do_while'||step.type==='while'){
       const slots=step.type==='if_else'?['then_steps','else_steps']:['steps'];
       const normalized={...step,_id:++stepIdCnt};
-      if(step.type==='do_while'){
+      if(step.type==='do_while'||step.type==='while'){
         normalized.repeat_when=step.repeat_when??'match';
         normalized.max_iterations=step.max_iterations??10;
       }
       slots.forEach(slot=>{
         const children=step[slot]??[];
         if(!Array.isArray(children))throw new Error('Control-block actions must be a list.');
-        if(children.some(child=>child.type==='if_else'||child.type==='do_while'))throw new Error('Control blocks cannot be nested.');
+        if(children.some(child=>['if_else','do_while','while'].includes(child.type)))throw new Error('Control blocks cannot be nested.');
         normalized[slot]=normalizeImportedSteps(children);
       });
       out.push(normalized);
@@ -1506,7 +1547,7 @@ function assignEditorStepIds(nodes){
     if(node.type==='if_else'){
       node.then_steps=assignEditorStepIds(node.then_steps||[]);
       node.else_steps=assignEditorStepIds(node.else_steps||[]);
-    } else if(node.type==='do_while')node.steps=assignEditorStepIds(node.steps||[]);
+    } else if(node.type==='do_while'||node.type==='while')node.steps=assignEditorStepIds(node.steps||[]);
     return node;
   });
 }
@@ -1535,7 +1576,7 @@ function renderSteps(){
 function countEditorActions(nodes){
   return nodes.reduce((count,node)=>count+(node.type==='if_else'
     ?countEditorActions(node.then_steps||[])+countEditorActions(node.else_steps||[])
-    :node.type==='do_while'?countEditorActions(node.steps||[]):1),0);
+    :['do_while','while'].includes(node.type)?countEditorActions(node.steps||[]):1),0);
 }
 function editorDragId(event){
   return Number(event.dataTransfer?.getData('text/plain')||dragSrc);
@@ -1568,7 +1609,7 @@ function renderControlBlock(block,index,tb){
   const conditionSelect=`<select class="ti-s" aria-label="Control block condition" onchange="updateControlBlock(${block._id},'condition_id',this.value)"><option value="">Choose Condition...</option>${options}</select>`;
   panel.innerHTML=block.type==='if_else'
     ?`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>IF / ELSE</strong>${conditionSelect}</div>`
-    :`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>DO-WHILE</strong>${conditionSelect}<label>repeat <select class="ti-s" aria-label="Repeat when" onchange="updateControlBlock(${block._id},'repeat_when',this.value)"><option value="match"${block.repeat_when==='match'?' selected':''}>MATCH</option><option value="not_match"${block.repeat_when==='not_match'?' selected':''}>NOT MATCH</option></select></label><label>max <input class="ti" aria-label="Maximum iterations" type="number" min="1" max="10000" value="${escapeEditorAttr(block.max_iterations)}" onchange="updateControlBlock(${block._id},'max_iterations',this.value)"></label></div>`;
+    :`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>${block.type==='while'?'WHILE':'DO-WHILE'}</strong>${conditionSelect}<label>repeat <select class="ti-s" aria-label="Repeat when" onchange="updateControlBlock(${block._id},'repeat_when',this.value)"><option value="match"${block.repeat_when==='match'?' selected':''}>MATCH</option><option value="not_match"${block.repeat_when==='not_match'?' selected':''}>NOT MATCH</option></select></label><label>max <input class="ti" aria-label="Maximum iterations" type="number" min="1" max="10000" value="${escapeEditorAttr(block.max_iterations)}" onchange="updateControlBlock(${block._id},'max_iterations',this.value)"></label></div>`;
   const slots=block.type==='if_else'
     ?[['then_steps','THEN'],['else_steps','ELSE']]:[['steps','BODY']];
   slots.forEach(([slot,label])=>{
@@ -1588,6 +1629,20 @@ function renderControlBlock(block,index,tb){
     });
     panel.appendChild(drop);
     renderStepList(block[slot]||[],body,block._id,slot);
+    const end=document.createElement('div');
+    end.className='control-slot-end';
+    end.textContent='Drop here to append step';
+    end.addEventListener('dragover',event=>{
+      event.preventDefault();event.stopPropagation();end.classList.add('drag-over');
+    });
+    end.addEventListener('dragleave',()=>end.classList.remove('drag-over'));
+    end.addEventListener('drop',event=>{
+      event.preventDefault();event.stopPropagation();end.classList.remove('drag-over');
+      const id=editorDragId(event);
+      if(id)moveStepToSlot(id,block._id,slot);
+      dragSrc=null;
+    });
+    drop.appendChild(end);
   });
   cell.appendChild(panel);row.appendChild(cell);
   const deleteCell=document.createElement('td');
@@ -1599,7 +1654,7 @@ function renderControlBlock(block,index,tb){
 }
 function renderStepList(list,tb,parentBlockId=null,parentSlot=null){
   list.forEach((s,i)=>{
-    if(s.type==='if_else'||s.type==='do_while'){
+    if(s.type==='if_else'||s.type==='do_while'||s.type==='while'){
       renderControlBlock(s,i,tb);
       return;
     }
@@ -1695,7 +1750,7 @@ function renderStepList(list,tb,parentBlockId=null,parentSlot=null){
     tb.appendChild(tr);
   });
 }
-function updStep(id,key,val){const s=findStepLocation(id)?.step;if(!s||s.type==='if_else'||s.type==='do_while')return reportEditorError('Action step no longer exists.');const nk=['delay_ms','servo_id','angle','speed','duration_ms','home','x','y','amount','timeout_ms','stable_hits'];s[key]=nk.includes(key)?parseInt(val)||0:val;}
+function updStep(id,key,val){const s=findStepLocation(id)?.step;if(!s||['if_else','do_while','while'].includes(s.type))return reportEditorError('Action step no longer exists.');const nk=['delay_ms','servo_id','angle','speed','duration_ms','home','x','y','amount','timeout_ms','stable_hits'];s[key]=nk.includes(key)?parseInt(val)||0:val;}
 function updStepKbd(id,t){
   const s=findStepLocation(id)?.step;
   if(!s||s.type!=='kbd')return reportEditorError('Keyboard step no longer exists.');
@@ -1717,7 +1772,7 @@ function collectImgBundle(){
         addCondition(node.condition_id);
         visit(node.then_steps);
         visit(node.else_steps);
-      } else if(node.type==='do_while'){
+      } else if(node.type==='do_while'||node.type==='while'){
         addCondition(node.condition_id);
         visit(node.steps);
       } else {
@@ -1759,7 +1814,7 @@ function exportJSON(){
     .sort((a,b)=>parseInt(a[0])-parseInt(b[0]))
     .map(([sid,pin])=>`ATTACH ${sid} ${pin}`);
   const img=collectImgBundle();
-  const hasControlFlow=out.some(step=>step.type==='if_else'||step.type==='do_while');
+  const hasControlFlow=out.some(step=>['if_else','do_while','while'].includes(step.type));
   const payload={
     schema_version:hasControlFlow?6:(out.some(step=>step.type==='mse'&&step.action==='IMAGE_MOVE')?5:(out.some(step=>step.type==='ocr')?3:(img.bundle.conditions.length?2:1))),
     name:document.getElementById('script-name').value.trim()||null,
@@ -2125,6 +2180,8 @@ function kbmWSConnect(){
       setProgress(cur,tot);
       const typeLabel=msg.step_type.toUpperCase();
       document.getElementById('sc-prog-step').textContent=`[${typeLabel}] ${cur}/${tot}`;
+    } else if(msg.type==='script_condition'){
+      logScriptCondition(msg);
     } else if(msg.type==='script_done'){
       setScriptPause(null);
       setFifoQueueData({...fifoState,running:false,paused:false,pause:null,waiting:null});
@@ -2572,6 +2629,7 @@ let visualRevision=0;
 let vcmOcrStepId=null,ocrTestRevision=0,ocrTestController=null;
 let vcmImageMode=false,vcmImageStepId=null,vcmImageConfig=null,vcmImageDirty=false,vcmImageSelectionRevision=0;
 let roiDraw={active:false,sx:0,sy:0,ex:0,ey:0};
+let roiView={scale:1,fit:true,tool:'select',pan:null,pointerId:null,resizeObserver:null};
 
 /* Snapshot pool */
 async function takeSnapshot(){
@@ -2625,8 +2683,9 @@ function openCondModal(snapId){
   const snap=snapshots.find(s=>s.id===snapId);
   if(!snap)return;
   const img=document.getElementById('vcm-snap-img');
-  img.src='data:image/jpeg;base64,'+snap.thumb_b64;
   img.onload=()=>syncDrawCanvas();
+  img.onerror=()=>roiSnapshotError();
+  img.src='data:image/jpeg;base64,'+snap.thumb_b64;
   document.getElementById('vcm-name').value='';
   document.getElementById('vcm-thr').value=92;
   document.getElementById('vcm-thr-val').textContent='0.92';
@@ -2638,6 +2697,7 @@ function openCondModal(snapId){
   sb.textContent='Create'; sb.onclick=createCondition;
   clearRoi();
   document.getElementById('vcModal').classList.add('open');
+  resetRoiView();
 }
 function openCondModalEdit(cidEnc){
   const cid=decodeURIComponent(cidEnc);
@@ -2649,9 +2709,10 @@ function openCondModalEdit(cidEnc){
   vcmSnapId=cond.snapshot_id;
   vcmRoi=cond.roi?[...cond.roi]:null;
   const img=document.getElementById('vcm-snap-img');
+  img.onerror=()=>roiSnapshotError();
   if(snap){
-    img.src='data:image/jpeg;base64,'+snap.thumb_b64;
     img.onload=()=>{syncDrawCanvas();if(vcmRoi)drawSavedRoi(vcmRoi);};
+    img.src='data:image/jpeg;base64,'+snap.thumb_b64;
   } else {
     img.src='';
     img.onload=null;
@@ -2667,8 +2728,15 @@ function openCondModalEdit(cidEnc){
   const sb=document.getElementById('vcm-submit-btn');
   sb.textContent='Save'; sb.onclick=saveCondition;
   document.getElementById('vcModal').classList.add('open');
+  resetRoiView();
+  if(!snap)roiSnapshotError();
 }
 function closeCondModal(){
+  cancelRoiGesture();
+  if(roiView.resizeObserver)roiView.resizeObserver.disconnect();
+  roiView.resizeObserver=null;
+  document.getElementById('vcm-snap-img').onload=null;
+  document.getElementById('vcm-snap-img').onerror=null;
   ocrTestRevision++;
   if(ocrTestController)ocrTestController.abort();
   ocrTestController=null;vcmOcrStepId=null;
@@ -2858,20 +2926,113 @@ async function testImageMove(){
   }
 }
 function syncDrawCanvas(){
-  const wrap=document.getElementById('vcm-snap-wrap');
   const img=document.getElementById('vcm-snap-img');
   const dc=document.getElementById('vcm-draw-canvas');
   const rc=document.getElementById('vcm-roi-canvas');
-  dc.width=img.naturalWidth||img.offsetWidth||640;
-  dc.height=img.naturalHeight||img.offsetHeight||480;
+  if(!img.naturalWidth||!img.naturalHeight)return;
+  dc.width=img.naturalWidth;dc.height=img.naturalHeight;
   rc.width=dc.width;rc.height=dc.height;
+  if(vcmRoi)drawSavedRoi(vcmRoi);
+  if(roiView.fit)fitRoiView();
+  else renderRoiView();
+}
+function roiSnapshotError(){
+  document.getElementById('vcm-view-info').textContent='Snapshot unavailable. Take a new SNAP and try again.';
+  reportEditorError('ROI snapshot could not be loaded.');
+}
+function resetRoiView(){
+  cancelRoiGesture();
+  if(roiView.resizeObserver)roiView.resizeObserver.disconnect();
+  roiView.scale=1;roiView.fit=true;
+  document.getElementById('vcModal').classList.add('expanded');
+  document.getElementById('vcm-expand-btn').textContent='Compact';
+  document.getElementById('vcm-expand-btn').setAttribute('aria-pressed','true');
+  setRoiTool('select');
+  const viewport=document.getElementById('vcm-viewport');
+  viewport.scrollLeft=0;viewport.scrollTop=0;
+  roiView.resizeObserver=new ResizeObserver(()=>{
+    if(document.getElementById('vcModal').classList.contains('open')){
+      if(roiView.fit)fitRoiView();
+      else renderRoiView();
+    }
+  });
+  roiView.resizeObserver.observe(viewport);
+  if(document.getElementById('vcm-snap-img').complete)syncDrawCanvas();
+}
+function renderRoiView(){
+  const img=document.getElementById('vcm-snap-img');
+  if(!img.naturalWidth||!img.naturalHeight)return;
+  const wrap=document.getElementById('vcm-snap-wrap');
+  wrap.style.width=img.naturalWidth*roiView.scale+'px';
+  wrap.style.height=img.naturalHeight*roiView.scale+'px';
+  document.getElementById('vcm-zoom-value').textContent=Math.round(roiView.scale*100)+'%';
+  document.getElementById('vcm-view-info').textContent=img.naturalWidth+' × '+img.naturalHeight+
+    (vcmRoi?' | ROI '+vcmRoi.map(value=>value.toFixed(4)).join(', '):' | No ROI selected');
+  drawRoiOverlay();
+}
+function fitRoiView(){
+  cancelRoiGesture();
+  roiView.fit=true;
+  const viewport=document.getElementById('vcm-viewport'),img=document.getElementById('vcm-snap-img');
+  if(!img.naturalWidth||!img.naturalHeight||!viewport.clientWidth||!viewport.clientHeight)return;
+  roiView.scale=Math.min(4,viewport.clientWidth/img.naturalWidth,viewport.clientHeight/img.naturalHeight);
+  viewport.scrollLeft=0;viewport.scrollTop=0;
+  renderRoiView();
+}
+function setRoiZoom(scale,clientX=null,clientY=null){
+  if(!Number.isFinite(scale))return reportEditorError('Invalid ROI zoom.');
+  const img=document.getElementById('vcm-snap-img');
+  if(!img.naturalWidth||!img.naturalHeight)return reportEditorError('Snapshot is not loaded.');
+  cancelRoiGesture();
+  const viewport=document.getElementById('vcm-viewport'),wrap=document.getElementById('vcm-snap-wrap');
+  const bounds=viewport.getBoundingClientRect(),before=wrap.getBoundingClientRect();
+  const anchorX=clientX??bounds.left+viewport.clientWidth/2;
+  const anchorY=clientY??bounds.top+viewport.clientHeight/2;
+  const imageX=(anchorX-before.left)/before.width,imageY=(anchorY-before.top)/before.height;
+  roiView.scale=Math.max(0.1,Math.min(4,scale));roiView.fit=false;
+  renderRoiView();
+  const after=wrap.getBoundingClientRect();
+  viewport.scrollLeft+=after.left+imageX*after.width-anchorX;
+  viewport.scrollTop+=after.top+imageY*after.height-anchorY;
+}
+function roiWheel(event){
+  if(!event.ctrlKey)return;
+  event.preventDefault();
+  setRoiZoom(roiView.scale*(event.deltaY<0?1.15:1/1.15),event.clientX,event.clientY);
+}
+function toggleRoiExpanded(){
+  cancelRoiGesture();
+  const expanded=document.getElementById('vcModal').classList.toggle('expanded');
+  const button=document.getElementById('vcm-expand-btn');
+  button.textContent=expanded?'Compact':'Expand';
+  button.setAttribute('aria-pressed',String(expanded));
+  if(roiView.fit)fitRoiView();
+}
+function setRoiTool(tool){
+  if(!['select','pan'].includes(tool))return reportEditorError('Unknown ROI tool.');
+  cancelRoiGesture();
+  roiView.tool=tool;
+  document.getElementById('vcm-select-btn').setAttribute('aria-pressed',String(tool==='select'));
+  document.getElementById('vcm-pan-btn').setAttribute('aria-pressed',String(tool==='pan'));
+  document.getElementById('vcm-draw-canvas').style.cursor=tool==='pan'?'grab':'crosshair';
+}
+function cancelRoiGesture(){
+  const dc=document.getElementById('vcm-draw-canvas');
+  if(roiView.pointerId!==null&&dc.hasPointerCapture(roiView.pointerId))dc.releasePointerCapture(roiView.pointerId);
+  roiView.pointerId=null;roiView.pan=null;
+  roiDraw.active=false;
+  if(vcmRoi)drawSavedRoi(vcmRoi);
+  else{
+    roiDraw.sx=0;roiDraw.sy=0;roiDraw.ex=0;roiDraw.ey=0;
+    drawRoiOverlay();
+  }
 }
 function clearRoi(){
+  cancelRoiGesture();
   vcmRoi=null;
   roiDraw={active:false,sx:0,sy:0,ex:0,ey:0};
-  const rc=document.getElementById('vcm-roi-canvas');
-  const ctx=rc.getContext('2d');
-  ctx.clearRect(0,0,rc.width,rc.height);
+  document.getElementById('vcm-roi-hint').style.display='';
+  renderRoiView();
 }
 function drawSavedRoi(roi){
   const [rx,ry,rw,rh]=roi;
@@ -2880,15 +3041,32 @@ function drawSavedRoi(roi){
   drawRoiOverlay();
 }
 function roiMouseDown(e){
+  if(e.button!==0||roiView.pointerId!==null)return;
+  const img=document.getElementById('vcm-snap-img');
+  if(!img.complete||!img.naturalWidth||!img.naturalHeight)return reportEditorError('Snapshot is not loaded.');
   const dc=document.getElementById('vcm-draw-canvas');
   const rect=dc.getBoundingClientRect();
-  if(e.pointerId!=null)dc.setPointerCapture(e.pointerId);
+  if(!rect.width||!rect.height)return;
+  roiView.pointerId=e.pointerId;
+  dc.setPointerCapture(e.pointerId);
+  if(roiView.tool==='pan'){
+    const viewport=document.getElementById('vcm-viewport');
+    roiView.pan={x:e.clientX,y:e.clientY,left:viewport.scrollLeft,top:viewport.scrollTop};
+    return;
+  }
   roiDraw.active=true;
   roiDraw.sx=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
   roiDraw.sy=Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height));
   roiDraw.ex=roiDraw.sx;roiDraw.ey=roiDraw.sy;
 }
 function roiMouseMove(e){
+  if(e.pointerId!==roiView.pointerId)return;
+  if(roiView.pan){
+    const viewport=document.getElementById('vcm-viewport');
+    viewport.scrollLeft=roiView.pan.left+roiView.pan.x-e.clientX;
+    viewport.scrollTop=roiView.pan.top+roiView.pan.y-e.clientY;
+    return;
+  }
   if(!roiDraw.active)return;
   const dc=document.getElementById('vcm-draw-canvas');
   const rect=dc.getBoundingClientRect();
@@ -2897,6 +3075,8 @@ function roiMouseMove(e){
   drawRoiOverlay();
 }
 function roiMouseUp(e){
+  if(e.pointerId!==roiView.pointerId)return;
+  if(roiView.pan){roiMouseMove(e);cancelRoiGesture();return;}
   if(!roiDraw.active)return;
   roiMouseMove(e);
   roiDraw.active=false;
@@ -2909,7 +3089,8 @@ function roiMouseUp(e){
     if(vcmImageMode)imageTargetChanged();
     document.getElementById('vcm-roi-hint').style.display='none';
   }
-  drawRoiOverlay();
+  cancelRoiGesture();
+  renderRoiView();
 }
 function drawRoiOverlay(){
   const rc=document.getElementById('vcm-roi-canvas');
@@ -2920,13 +3101,14 @@ function drawRoiOverlay(){
   const rw=Math.abs(roiDraw.ex-roiDraw.sx);
   const rh=Math.abs(roiDraw.ey-roiDraw.sy);
   const W=rc.width,H=rc.height;
-  ctx.strokeStyle='#2dd4bf';ctx.lineWidth=2;ctx.setLineDash([4,3]);
+  ctx.strokeStyle='#2dd4bf';ctx.lineWidth=2/roiView.scale;ctx.setLineDash([4/roiView.scale,3/roiView.scale]);
   ctx.strokeRect(rx*W,ry*H,rw*W,rh*H);
   ctx.fillStyle='rgba(45,212,191,0.08)';
   ctx.fillRect(rx*W,ry*H,rw*W,rh*H);
 }
 async function saveCondition(){
   if(!vcmEditCid){return;}
+  if(!vcmRoi){alert('Please draw an ROI on the image first.');return;}
   const name=document.getElementById('vcm-name').value.trim();
   if(!name){alert('Please enter a condition name.');return;}
   const threshold=parseFloat((document.getElementById('vcm-thr').value/100).toFixed(2));
@@ -3091,66 +3273,86 @@ addLog('kbm','RKS v4 ready','cdim');
 
 <!-- Condition creation modal -->
 <div id="vcModal">
-  <div id="vcModal-box">
+  <div id="vcModal-box" role="dialog" aria-modal="true" aria-labelledby="vcm-modal-title">
     <div class="vcm-hdr">
       <span id="vcm-modal-title">// Create Visual Condition</span>
-      <button class="btn-sm" style="margin-left:auto" onclick="closeCondModal()">✕</button>
+      <button class="btn-sm" id="vcm-expand-btn" style="margin-left:auto" aria-pressed="true" onclick="toggleRoiExpanded()">Compact</button>
+      <button class="btn-sm" aria-label="Close ROI dialog" onclick="closeCondModal()">✕</button>
     </div>
     <div class="vcm-body">
-      <div class="vcm-hint">Drag on the image to select the ROI region to monitor.</div>
-      <div class="vcm-snap-wrap" id="vcm-snap-wrap">
-        <img id="vcm-snap-img" src="" alt="snapshot" draggable="false">
-        <canvas id="vcm-roi-canvas"></canvas>
-        <canvas id="vcm-draw-canvas"
-          onpointerdown="roiMouseDown(event)"
-          onpointermove="roiMouseMove(event)"
-          onpointerup="roiMouseUp(event)"
-          onpointercancel="roiDraw.active=false"></canvas>
-      </div>
-      <div class="vcm-row" id="vcm-name-row">
-        <span class="vcm-lbl" id="vcm-name-label">Name</span>
-        <input type="text" id="vcm-name" class="pop-inp" style="flex:1" placeholder="condition name">
-      </div>
-      <div class="vcm-row" data-condition-setting>
-        <span class="vcm-lbl">Threshold <span id="vcm-thr-val" style="color:var(--tel)">0.92</span></span>
-        <input type="range" id="vcm-thr" min="50" max="99" value="92" style="flex:1"
-          oninput="document.getElementById('vcm-thr-val').textContent=(this.value/100).toFixed(2)">
-      </div>
-      <div class="vcm-row" data-condition-setting>
-        <span class="vcm-lbl">Min Hits</span>
-        <input type="number" id="vcm-hits" class="pop-inp" value="3" min="1" max="30" style="width:60px">
-      </div>
-      <div class="vcm-row" data-condition-setting>
-        <span class="vcm-lbl">Cooldown ms</span>
-        <input type="number" id="vcm-cool" class="pop-inp" value="3000" min="100" max="60000" step="500" style="width:80px">
-      </div>
-      <div id="vcm-roi-hint" class="vcm-hint" style="color:var(--amb)">⚠ Draw an ROI on the image above.</div>
-      <div id="vcm-ocr-options" hidden>
-        <div class="vcm-row">
-          <label class="vcm-lbl" for="vcm-ocr-timeout">Timeout ms</label>
-          <input type="number" id="vcm-ocr-timeout" class="pop-inp" value="5000" min="100" max="60000" step="100" style="width:90px">
+      <div class="vcm-image-panel">
+        <div class="vcm-toolbar" role="toolbar" aria-label="ROI image tools">
+          <button class="btn-sm" onclick="fitRoiView()">Fit</button>
+          <button class="btn-sm" onclick="setRoiZoom(1)">100%</button>
+          <button class="btn-sm" onclick="setRoiZoom(2)">200%</button>
+          <button class="btn-sm" aria-label="Zoom out" onclick="setRoiZoom(roiView.scale/1.25)">−</button>
+          <output id="vcm-zoom-value" aria-label="Image zoom">100%</output>
+          <button class="btn-sm" aria-label="Zoom in" onclick="setRoiZoom(roiView.scale*1.25)">＋</button>
+          <button class="btn-sm" id="vcm-select-btn" aria-pressed="true" onclick="setRoiTool('select')">Select ROI</button>
+          <button class="btn-sm" id="vcm-pan-btn" aria-pressed="false" onclick="setRoiTool('pan')">Pan</button>
+          <button class="btn-sm" onclick="clearRoi()">Clear ROI</button>
         </div>
-        <div class="vcm-row">
-          <label class="vcm-lbl" for="vcm-ocr-stable">Stable Samples</label>
-          <input type="number" id="vcm-ocr-stable" class="pop-inp" value="2" min="1" max="10" style="width:60px">
+        <div class="vcm-hint">Drag to select ROI. Use Pan to move the image, or Ctrl + wheel to zoom.</div>
+        <div id="vcm-viewport" onwheel="roiWheel(event)">
+          <div class="vcm-snap-wrap" id="vcm-snap-wrap">
+            <img id="vcm-snap-img" src="" alt="snapshot" draggable="false">
+            <canvas id="vcm-roi-canvas"></canvas>
+            <canvas id="vcm-draw-canvas" aria-label="Draw ROI on snapshot"
+              onpointerdown="roiMouseDown(event)"
+              onpointermove="roiMouseMove(event)"
+              onpointerup="roiMouseUp(event)"
+              onpointercancel="cancelRoiGesture()"
+              onlostpointercapture="cancelRoiGesture()"></canvas>
+          </div>
         </div>
+        <div id="vcm-view-info" role="status" aria-live="polite"></div>
       </div>
-      <div id="vcm-ocr-result" role="status" aria-live="polite" style="font-family:var(--mono);font-size:11px;overflow-wrap:anywhere"></div>
-      <div id="vcm-image-options" hidden>
-        <div class="vcm-row">
-          <label class="vcm-lbl" for="vcm-image-threshold">Match Threshold</label>
-          <input id="vcm-image-threshold" class="pop-inp" type="number" min="0.5" max="1" step="0.01" value="0.92" style="width:80px">
+      <div class="vcm-settings" aria-label="ROI settings">
+        <div class="vcm-row" id="vcm-name-row">
+          <span class="vcm-lbl" id="vcm-name-label">Name</span>
+          <input type="text" id="vcm-name" class="pop-inp" style="flex:1" placeholder="condition name">
         </div>
-        <div class="vcm-row" style="flex-wrap:wrap">
-          <span class="vcm-lbl">Search ROI</span>
-          <input id="vcm-search-0" class="pop-inp" type="number" min="0" max="1" step="0.05" value="0" aria-label="Search left" title="Search left (0-1)" style="width:48px">
-          <input id="vcm-search-1" class="pop-inp" type="number" min="0" max="1" step="0.05" value="0" aria-label="Search top" title="Search top (0-1)" style="width:48px">
-          <input id="vcm-search-2" class="pop-inp" type="number" min="0.01" max="1" step="0.05" value="1" aria-label="Search width" title="Search width (0-1)" style="width:48px">
-          <input id="vcm-search-3" class="pop-inp" type="number" min="0.01" max="1" step="0.05" value="1" aria-label="Search height" title="Search height (0-1)" style="width:48px">
+        <div class="vcm-row" data-condition-setting>
+          <span class="vcm-lbl">Threshold <span id="vcm-thr-val" style="color:var(--tel)">0.92</span></span>
+          <input type="range" id="vcm-thr" min="50" max="99" value="92" style="flex:1"
+            oninput="document.getElementById('vcm-thr-val').textContent=(this.value/100).toFixed(2)">
         </div>
+        <div class="vcm-row" data-condition-setting>
+          <span class="vcm-lbl">Min Hits</span>
+          <input type="number" id="vcm-hits" class="pop-inp" value="3" min="1" max="30" style="width:60px">
+        </div>
+        <div class="vcm-row" data-condition-setting>
+          <span class="vcm-lbl">Cooldown ms</span>
+          <input type="number" id="vcm-cool" class="pop-inp" value="3000" min="100" max="60000" step="500" style="width:80px">
+        </div>
+        <div id="vcm-roi-hint" class="vcm-hint" style="color:var(--amb)">⚠ Draw an ROI on the image above.</div>
+        <div id="vcm-ocr-options" hidden>
+          <div class="vcm-row">
+            <label class="vcm-lbl" for="vcm-ocr-timeout">Timeout ms</label>
+            <input type="number" id="vcm-ocr-timeout" class="pop-inp" value="5000" min="100" max="60000" step="100" style="width:90px">
+          </div>
+          <div class="vcm-row">
+            <label class="vcm-lbl" for="vcm-ocr-stable">Stable Samples</label>
+            <input type="number" id="vcm-ocr-stable" class="pop-inp" value="2" min="1" max="10" style="width:60px">
+          </div>
+        </div>
+        <div id="vcm-ocr-result" role="status" aria-live="polite" style="font-family:var(--mono);font-size:11px;overflow-wrap:anywhere"></div>
+        <div id="vcm-image-options" hidden>
+          <div class="vcm-row">
+            <label class="vcm-lbl" for="vcm-image-threshold">Match Threshold</label>
+            <input id="vcm-image-threshold" class="pop-inp" type="number" min="0.5" max="1" step="0.01" value="0.92" style="width:80px">
+          </div>
+          <div class="vcm-row" style="flex-wrap:wrap">
+            <span class="vcm-lbl">Search ROI</span>
+            <input id="vcm-search-0" class="pop-inp" type="number" min="0" max="1" step="0.05" value="0" aria-label="Search left" title="Search left (0-1)" style="width:48px">
+            <input id="vcm-search-1" class="pop-inp" type="number" min="0" max="1" step="0.05" value="0" aria-label="Search top" title="Search top (0-1)" style="width:48px">
+            <input id="vcm-search-2" class="pop-inp" type="number" min="0.01" max="1" step="0.05" value="1" aria-label="Search width" title="Search width (0-1)" style="width:48px">
+            <input id="vcm-search-3" class="pop-inp" type="number" min="0.01" max="1" step="0.05" value="1" aria-label="Search height" title="Search height (0-1)" style="width:48px">
+          </div>
+        </div>
+        <img id="vcm-image-template" alt="Stored click template" hidden style="max-width:120px;max-height:64px;object-fit:contain;align-self:flex-start">
+        <img id="vcm-image-preview" alt="Located target and center" hidden style="width:100%;height:auto;flex-shrink:0">
       </div>
-      <img id="vcm-image-template" alt="Stored click template" hidden style="max-width:120px;max-height:64px;object-fit:contain;align-self:flex-start">
-      <img id="vcm-image-preview" alt="Located target and center" hidden style="width:100%;height:auto;flex-shrink:0">
     </div>
     <div class="vcm-ftr">
       <button class="btn-t" id="vcm-ocr-test" onclick="testOcrRegion()" hidden>Test OCR</button>

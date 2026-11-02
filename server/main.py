@@ -1274,8 +1274,16 @@ class DoWhileBlock(BaseModel):
     steps: list[MixedStep]
 
 
+class WhileBlock(BaseModel):
+    type: Literal["while"]
+    condition_id: str = Field(..., min_length=1)
+    repeat_when: Literal["match", "not_match"]
+    max_iterations: int = Field(default=10, ge=1, le=10_000, strict=True)
+    steps: list[MixedStep]
+
+
 ScriptNode = Annotated[
-    Union[IfElseBlock, DoWhileBlock, MixedStep],
+    Union[IfElseBlock, DoWhileBlock, WhileBlock, MixedStep],
     Field(discriminator="type"),
 ]
 
@@ -1299,6 +1307,8 @@ def _validate_control_steps(steps: Sequence[ScriptNode]) -> None:
             raise ValueError("An IF block must have at least one populated branch")
         if isinstance(node, DoWhileBlock) and not node.steps:
             raise ValueError("A do-while block must have a non-empty body")
+        if isinstance(node, WhileBlock) and not node.steps:
+            raise ValueError("A while block must have a non-empty body")
 
 
 def _collect_condition_ids(steps: Sequence[ScriptNode]) -> list[str]:
@@ -1307,7 +1317,7 @@ def _collect_condition_ids(steps: Sequence[ScriptNode]) -> list[str]:
         if isinstance(node, IfElseBlock):
             condition_ids.append(node.condition_id)
             node_steps = [*node.then_steps, *node.else_steps]
-        elif isinstance(node, DoWhileBlock):
+        elif isinstance(node, (DoWhileBlock, WhileBlock)):
             condition_ids.append(node.condition_id)
             node_steps = node.steps
         else:
@@ -1710,6 +1720,21 @@ async def _run_action_step(step: MixedStep, *, top_index, variables, slot=None, 
         raise
 
 
+async def _publish_control_decision(step, index, total, score, matched, branch, iteration=None):
+    condition = condition_manager.get(step.condition_id)
+    message = {
+        "type": "script_condition", "step": index, "total": total,
+        "block_type": step.type, "condition_id": step.condition_id,
+        "score": score, "threshold": condition.threshold if condition else None,
+        "matched": matched, "branch": branch, "iteration": iteration,
+    }
+    logger.info(
+        "[CONDITION %s/%s] %s score=%.4f threshold=%s matched=%s branch=%s iteration=%s",
+        index + 1, total, step.condition_id, score, message["threshold"],
+        matched, branch, iteration)
+    await kbm_ws.broadcast(message)
+
+
 async def _run_mixed_script(req: MixedScriptRequest):
     """後端逐步執行混合腳本，透過 WS 推播進度"""
     total = len(req.steps)
@@ -1754,8 +1779,10 @@ async def _run_mixed_script(req: MixedScriptRequest):
                     script_runtime.set_phase("evaluating")
                     await _notify_runtime()
                     await _await_script_resume()
-                    _, matched = await _evaluate_condition_fresh(step.condition_id)
+                    score, matched = await _evaluate_condition_fresh(step.condition_id)
                     branch = "then_steps" if matched else "else_steps"
+                    await _publish_control_decision(
+                        step, i, total, score, matched, branch[:-6])
                     script_runtime.set_control_state(
                         i, branch=branch[:-6], condition_match=matched)
                     await _notify_runtime()
@@ -1784,17 +1811,78 @@ async def _run_mixed_script(req: MixedScriptRequest):
                         script_runtime.set_phase("evaluating")
                         await _notify_runtime()
                         await _await_script_resume()
-                        _, matched = await _evaluate_condition_fresh(step.condition_id)
+                        score, matched = await _evaluate_condition_fresh(step.condition_id)
                         script_runtime.set_control_state(i, condition_match=matched)
                         await _notify_runtime()
                         await _await_script_resume()
                         should_repeat = (
                             matched if step.repeat_when == "match" else not matched)
+                        await _publish_control_decision(
+                            step, i, total, score, matched,
+                            "repeat" if should_repeat else "exit", current)
                         if not should_repeat:
                             break
                         if current == step.max_iterations:
                             raise RuntimeError(
                                 f"Do-while iteration limit reached ({step.max_iterations})")
+                    script_runtime.complete_step(i)
+                    await _notify_runtime()
+                    continue
+
+                if isinstance(step, WhileBlock):
+                    script_runtime.set_control_state(
+                        i, iteration_limit=step.max_iterations)
+                    for current in range(1, step.max_iterations + 1):
+                        script_runtime.set_phase("evaluating")
+                        await _notify_runtime()
+                        await _await_script_resume()
+                        score, matched = await _evaluate_condition_fresh(step.condition_id)
+                        should_run = (
+                            matched if step.repeat_when == "match" else not matched)
+                        branch = "body" if should_run else "exit"
+                        script_runtime.set_control_state(
+                            i, condition_match=matched, branch=branch)
+                        await _notify_runtime()
+                        await _publish_control_decision(
+                            step, i, total, score, matched, branch, current)
+                        await _await_script_resume()
+                        if not should_run:
+                            if current == 1:
+                                script_runtime.set_control_state(
+                                    i, iteration=0,
+                                    iteration_limit=step.max_iterations)
+                                await _notify_runtime()
+                            break
+
+                        script_runtime.set_control_state(
+                            i, iteration=current, iteration_limit=step.max_iterations)
+                        await _notify_runtime()
+                        for child_index, child in enumerate(step.steps):
+                            await _await_script_resume()
+                            await _run_action_step(
+                                child, top_index=i, variables=variables,
+                                slot="steps", child_index=child_index)
+
+                        if current == step.max_iterations:
+                            await _await_script_resume()
+                            script_runtime.set_phase("evaluating")
+                            await _notify_runtime()
+                            await _await_script_resume()
+                            score, matched = await _evaluate_condition_fresh(
+                                step.condition_id)
+                            should_run = (
+                                matched if step.repeat_when == "match" else not matched)
+                            branch = "body" if should_run else "exit"
+                            script_runtime.set_control_state(
+                                i, condition_match=matched, branch=branch)
+                            await _notify_runtime()
+                            await _publish_control_decision(
+                                step, i, total, score, matched, branch, current + 1)
+                            if should_run:
+                                raise RuntimeError(
+                                    f"While iteration limit reached ({step.max_iterations})")
+                            break
+
                     script_runtime.complete_step(i)
                     await _notify_runtime()
                     continue
@@ -2213,7 +2301,7 @@ def _remap_imported_node(node: dict[str, Any], condition_map: dict[str, str]) ->
         result["else_steps"] = [
             _remap_imported_node(child, condition_map) for child in result.get("else_steps", [])
         ]
-    elif node_type == "do_while":
+    elif node_type in {"do_while", "while"}:
         condition_id = result.get("condition_id")
         if condition_id not in condition_map:
             raise HTTPException(422, f"Missing bundle Condition payload for Condition {condition_id}")

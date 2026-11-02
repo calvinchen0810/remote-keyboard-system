@@ -210,7 +210,7 @@ service ready for script input
 ### 3) Script Editor: Edit / Execution Status
 
 - **Edit** retains the local draft. **Execution Status** is a separate read-only view of submitted work and never loads steps into the draft. KBD TYPE text is shown in full (not masked), escaped as text; avoid sharing this screen if scripts contain secrets.
-- Execution Status shares Edit's compact toolbar, single-row job selector, TYPE/DELAY/PARAMS table, colored type badges and bottom progress row. Parameter values look like Edit fields but are selectable text, not disabled or interactive controls. A narrow status column replaces drag/delete controls. Control-flow rows show the IF match/branch or do-while iteration/limit plus read-only child action states, results and errors; the progress row identifies the active child. Completed/failed counts drive the progress bar, so an active event wait is not shown as completed.
+- Execution Status shares Edit's compact toolbar, single-row job selector, TYPE/DELAY/PARAMS table, colored type badges and bottom progress row. Parameter values look like Edit fields but are selectable text, not disabled or interactive controls. A narrow status column replaces drag/delete controls. Control-flow rows show the IF match/branch or loop iteration/limit plus read-only child action states, results and errors; the progress row identifies the active child. Completed/failed counts drive the progress bar, so an active event wait is not shown as completed.
 - Each `/script/run` submission returns a generated `job_id`. An optional top-level `name` (1-80 characters) appears in the job selector; unnamed jobs show a shortened ID. The backend cannot infer the filename used by curl `@file.json`. The editor's optional Name field is preserved on export/import.
 - **Follow Active** selects the active job as FIFO advances. Selecting a queued job turns follow off and previews immutable submitted steps without arming conditions, changing order or running anything. No job editing, reorder, delete, rerun or history database is provided.
 - The view highlights current/completed/failed/pending steps, loop iteration and waiting/recognition/location phase. EVT/IMG shows **no timeout**; remaining time applies only to bounded OCR/image search. It includes OCR results, IMAGE_MOVE centers/HID coordinates and condition name/ROI/score/threshold/hits; thumbnails use matching SNAP data when still available. Queued condition previews show inactive status and no borrowed live runtime from another job.
@@ -226,6 +226,10 @@ Example named request:
 
 ### 4) Visual Monitor
 
+- **Create Visual Condition / Edit Condition** opens an expanded ROI dialog (92% of the viewport width, 90% of its height). The image is on the left and settings on the right; narrow windows stack them vertically. **Compact / Expand** changes the dialog size without discarding the selection, and the submit/cancel controls remain visible.
+- Use **Fit**, **100%**, **200%**, or **− / ＋** to zoom (manual zoom: 10–400%; **Fit** can go below 10% to show a high-resolution image in a narrow viewport). **100%** maps one source-image pixel to one CSS pixel. **Select ROI** draws a region; **Pan** drags the enlarged image without changing that region. **Ctrl + mouse wheel** zooms around the cursor; ordinary scrolling moves the viewport. **Clear ROI** removes the drawn region. These image tools are also available in the shared OCR and IMAGE_MOVE dialogs.
+- Zooming and panning do not change the stored normalized `[x, y, width, height]` ROI or the source image. Reopening the dialog resets to expanded **Fit / Select ROI** mode. Recognition thresholds, condition behavior and existing OCR/image-move settings are unchanged.
+- After **Clear ROI**, draw a replacement before creating or saving a Condition; saving cannot silently retain a cleared selection.
 - Condition evaluates at about 3 fps
 - On match edge, emits `IMG.MATCH.<condition_id>`
 - Broadcasts visual events by websocket
@@ -331,7 +335,7 @@ Bundle import behavior:
 
 ### Control-flow scripts and Execution Status (schema 6)
 
-Structured scripts may include non-nested `if_else` and `do_while` nodes. Their children are ordinary action steps; blocks themselves do not count toward the limit of 200 ordinary steps across the complete script (including both IF branches). Legacy flat-step JSON remains supported.
+Structured scripts may include non-nested `if_else`, `do_while`, and pre-test `while` nodes. Their children are ordinary action steps; blocks themselves do not count toward the limit of 200 ordinary steps across the complete script (including both IF branches). Legacy flat-step JSON remains supported.
 
 ```json
 {
@@ -350,16 +354,23 @@ Structured scripts may include non-nested `if_else` and `do_while` nodes. Their 
       "repeat_when": "match",
       "max_iterations": 10,
       "steps": [{ "type": "mse", "action": "CLICK", "btn": "L" }]
+    },
+    {
+      "type": "while",
+      "condition_id": "door-ready",
+      "repeat_when": "match",
+      "max_iterations": 10,
+      "steps": [{ "type": "mse", "action": "CLICK", "btn": "L" }]
     }
   ]
 }
 ```
 
-- Each IF decision and each do-while decision evaluates its one existing visual Condition against a fresh frame, waiting at most five seconds for that frame; failure to obtain one fails the job. The decision ignores `min_hits` and cooldown. IF selects THEN immediately on a match and ELSE otherwise.
-- A do-while body executes at least once. `repeat_when` is `match` or `not_match` and defaults to `match`; `max_iterations` is an integer from 1 through 10,000 and defaults to 10. If another iteration is required at the limit, the job fails.
-- Conditions remain ordinary existing visual Conditions; there are no compound AND/OR expressions or OCR predicates in control blocks. Blocks cannot be nested, and each IF needs at least one populated branch while each do-while body must be non-empty at submission.
+- Each IF decision and each loop condition evaluates its one existing visual Condition against a fresh frame, waiting at most five seconds for that frame; failure to obtain one fails the job. The decision ignores `min_hits` and cooldown. IF selects THEN immediately on a match and ELSE otherwise.
+- A do-while body executes at least once before its first condition check. A while loop checks its condition before every body execution; if the initial condition does not match the selected `repeat_when` direction, its body executes zero times and the script continues to the next step. For both loops, `repeat_when` is `match` or `not_match` and defaults to `match`; `max_iterations` is an integer from 1 through 10,000 and defaults to 10. If the condition requires another body execution at the limit, the job fails.
+- Conditions remain ordinary existing visual Conditions; there are no compound AND/OR expressions or OCR predicates in control blocks. Blocks cannot be nested, and each IF needs at least one populated branch while each loop body must be non-empty at submission.
 - The script-wide `loop` option retains its existing whole-script behavior. Blocks and their ordinary action children are preserved by schema-6 editor exports/imports and image bundles; imported image/condition IDs are remapped through nested branches and bodies. An image-move-only bundle can remain schema 5; schema 6 is used when structured control flow is present.
-- Execution Status is read-only and shows the selected branch/match, do-while iteration/limit, child action states/results/errors and job error. It includes the latest failed job as a selectable immutable preview; a newer failure replaces it. Successful jobs are removed immediately and are not history. STOP or workspace clear removes the retained failure.
+- Execution Status is read-only and shows the selected branch/match, do-while or while iteration/limit, child action states/results/errors and job error. It includes the latest failed job as a selectable immutable preview; a newer failure replaces it. Successful jobs are removed immediately and are not history. STOP or workspace clear removes the retained failure.
 
 ---
 

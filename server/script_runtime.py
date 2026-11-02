@@ -218,7 +218,7 @@ class ScriptRuntime:
             return None
         if params.get("type") == "if_else":
             return {slot: params.get(slot, []) for slot in ("then_steps", "else_steps")}
-        if params.get("type") == "do_while":
+        if params.get("type") in {"do_while", "while"}:
             return {"steps": params.get("steps", [])}
         return None
 
