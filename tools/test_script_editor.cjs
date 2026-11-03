@@ -72,6 +72,7 @@ function createEditor(storage = {}) {
     'runtime-jobs': { innerHTML: '', value: '' },
     'runtime-content': { innerHTML: '' },
     'runtime-meta': { textContent: '' },
+    'active-elapsed': { textContent: '', hidden: true },
     'runtime-follow': { checked: true },
     'runtime-prog-lbl': { textContent: '' },
     'runtime-prog-fi': { style: {} },
@@ -188,6 +189,49 @@ test('script toolbar exposes controls for adding blank flow blocks', () => {
   assert.match(toolbar, /onclick="addWhileBlock\(\)"/);
 });
 
+test('step DELAY inputs reserve room for five digits without narrowing nested columns', () => {
+  const editor = createEditor();
+  editor.addKbdStep();
+  editor.steps[0].delay_ms = 10000;
+  editor.renderSteps();
+  assert.match(editor.renderedRows[0].innerHTML,
+    /class="ti pop-inp" value="10000" style="width:54px"/);
+  const table = html.slice(html.indexOf('<div id="tbl-wrap">'), html.indexOf('id="steps-tbody"'));
+  assert.match(table, /<th style="width:64px">DELAY<\/th>/);
+  assert.match(editor.renderControlBlock.toString(),
+    /<col style="width:48px"><col style="width:64px">/);
+});
+
+test('COMBO supports TAB and F4 in the second slot with an empty third key', () => {
+  for (const second of ['TAB', 'F4']) {
+    const editor = createEditor();
+    editor.addKbdStep();
+    const step = editor.steps[0];
+    editor.updStep(step._id, 'mod1', 'ALT');
+    editor.updStep(step._id, 'mod2', second);
+    editor.updStep(step._id, 'key', '');
+    editor.renderSteps();
+    const markup = editor.renderedRows[0].innerHTML;
+    assert.match(markup, new RegExp(`<option value="${second}" selected>`));
+    assert.match(markup, /aria-label="Third combo key"[^>]*value=""/);
+    assert.equal(editor.runtimeStepText(step), `COMBO ALT+${second}`);
+    assert.doesNotMatch(editor.runtimeStepFields(step), />C<\/span>/);
+    const imported = editor.normalizeImportedSteps(editor.serializeEditorSteps(editor.steps));
+    assert.equal(imported[0].key, '');
+    assert.equal(imported[0].mod2, second);
+  }
+});
+
+test('flow block buttons occupy a separate toolbar row after execution controls', () => {
+  const toolbar = html.slice(html.indexOf('<div id="script-tb">'), html.indexOf('<div id="tbl-wrap">'));
+  const row = toolbar.slice(toolbar.indexOf('<div class="script-flow-row"'));
+  assert.ok(toolbar.indexOf('<div class="script-flow-row"') > toolbar.indexOf('id="script-resume-btn"'));
+  for (const handler of ['addIfElseBlock', 'addDoWhileBlock', 'addWhileBlock']) {
+    assert.ok(row.includes(`onclick="${handler}()"`));
+  }
+  assert.match(html, /\.script-flow-row\{[^}]*flex-basis:100%/);
+});
+
 test('while conditions and action children round-trip with the other control blocks', () => {
   const editor = createEditor();
   editor.conditions = [{ condition_id: 'while-door', name: 'Door', snapshot_id: 'snap',
@@ -246,7 +290,7 @@ test('control slots reserve matching columns and keep action parameters on one l
   const panel = editor.renderedRows[0].children[0].children[0];
   const tables = panel.children.map(slot => slot.children[0]);
   for (const table of tables) {
-    assert.match(table.innerHTML, /<colgroup><col style="width:14px"><col style="width:48px"><col style="width:52px"><col><col style="width:22px"><\/colgroup>/);
+    assert.match(table.innerHTML, /<colgroup><col style="width:14px"><col style="width:48px"><col style="width:64px"><col><col style="width:22px"><\/colgroup>/);
   }
   assert.match(tables[0].children[0].children[0].innerHTML, /class="step-params"/);
   assert.match(html, /\.control-slot-table td\{white-space:nowrap\}/);
@@ -283,7 +327,7 @@ test('each control slot has a trailing drop target that appends actions', () => 
       return block.type === 'if_else'
         ? panel?.className.includes('control-if')
         : panel?.className.includes('control-repeat') &&
-          panel.innerHTML.includes(block.type === 'while' ? '<strong>WHILE</strong>' : '<strong>DO-WHILE</strong>');
+          panel.innerHTML.includes(block.type === 'while' ? '<strong>WHILE</strong>' : '<strong>DO</strong>');
     });
     const panel = row.children[0].children[0];
     const drop = panel.children[slot === 'else_steps' ? 1 : 0];
@@ -383,8 +427,13 @@ test('block controls render escaped condition labels and editable repeat setting
   editor.conditions = [{ condition_id: 'cond"value', name: '<img src=x>' }];
   const block = editor.addDoWhileBlock('cond"value');
   const row = editor.renderedRows.at(-1);
-  const markup = row.children[0].children[0].innerHTML;
-  assert.match(markup, /DO-WHILE/);
+  const panel = row.children[0].children[0];
+  const markup = panel.innerHTML + panel.children.at(-1).innerHTML;
+  assert.match(panel.innerHTML, /<strong>DO<\/strong>/);
+  assert.doesNotMatch(panel.innerHTML, /Choose Condition/);
+  assert.equal(panel.children.at(-1).className, 'control-head control-condition-footer');
+  assert.match(panel.children.at(-1).innerHTML, /<strong>WHILE<\/strong>/);
+  assert.equal(panel.children[0].className, 'control-slot');
   assert.match(markup, /MATCH/);
   assert.match(markup, /NOT MATCH/);
   assert.match(markup, /min="1" max="10000"/);
@@ -1544,6 +1593,67 @@ test('execution status formats active elapsed time as HH:MM:SS without wrapping 
   editor.renderRuntimeDetail({job_id:'elapsed-job',name:'Example',active:true,phase:'waiting',
     started_at:Date.now()/1000-65,iteration:0,conditions:[],steps:[]});
   assert.match(editor.elements['runtime-meta'].textContent,/elapsed \d{2}:\d{2}:\d{2}/);
+});
+
+test('topbar elapsed follows the active script independently of the selected view',()=>{
+  const editor=createEditor();
+  const timer=editor.elements['active-elapsed'];
+  editor.setRuntimeSnapshot({session_id:'timer',revision:1,active:{
+    job_id:'active',phase:'waiting',started_at:100},queued:[{job_id:'queued'}]});
+  editor.updateActiveElapsed(165);
+  assert.equal(timer.hidden,false);
+  assert.equal(timer.textContent,'00:01:05');
+  editor.runtimeSelectedId='queued';
+  editor.scriptView='edit';
+  editor.updateActiveElapsed(166);
+  assert.equal(timer.textContent,'00:01:06');
+  editor.setRuntimeSnapshot({session_id:'timer',revision:2,active:{
+    job_id:'next',phase:'paused',started_at:160},queued:[]});
+  editor.updateActiveElapsed(167);
+  assert.equal(timer.textContent,'00:00:07');
+  editor.setRuntimeSnapshot({session_id:'timer',revision:1,active:null,queued:[]});
+  assert.equal(timer.hidden,false);
+  editor.setRuntimeSnapshot({session_id:'timer',revision:3,active:null,queued:[]});
+  assert.equal(timer.hidden,true);
+  assert.equal(timer.textContent,'');
+  editor.setRuntimeSnapshot({session_id:'timer',revision:4,active:{
+    job_id:'missing-start',phase:'queued'},queued:[]});
+  assert.equal(timer.hidden,true);
+  editor.setRuntimeSnapshot({session_id:'timer',revision:5,active:{
+    job_id:'active',started_at:100},queued:[]});
+  editor.resetRuntimeView();
+  assert.equal(timer.hidden,true);
+  assert.match(html, /id="active-elapsed"[^>]*hidden[^>]*><\/span>\s*<a href="\/arch"/);
+  assert.match(html, /#active-elapsed\{[^}]*color:var\(--grn\)/);
+  assert.match(html, /setInterval\(updateActiveElapsed,1000\)/);
+});
+
+test('runtime controls keep complete labels and group their branches apart from following steps',()=>{
+  const editor=createEditor();
+  editor.runtimeSelectedId='group-job';
+  const controls=['if_else','do_while','while'].map(type=>({
+    state:'pending',params:{type,condition_id:'door',repeat_when:'match',
+      then_steps:[{type:'kbd',cmd_type:'KEY',key:'ENTER'}],else_steps:[],
+      steps:[{type:'kbd',cmd_type:'KEY',key:'TAB'}]},
+    children:{},control:{},
+  }));
+  editor.renderRuntimeDetail({job_id:'group-job',active:false,phase:'queued',conditions:[],
+    steps:[...controls,{state:'pending',params:{type:'kbd',cmd_type:'TYPE',text:'FOLLOWING STEP'}}]});
+  const markup=editor.elements['runtime-content'].innerHTML;
+  assert.match(markup, /<th style="width:92px">TYPE<\/th>/);
+  const groups=Array.from(markup.matchAll(/<tbody class="runtime-control-group"[^>]*>([\s\S]*?)<\/tbody>/g));
+  assert.equal(groups.length,3);
+  for(const [index,label] of ['IF / ELSE','DO-WHILE','WHILE'].entries()){
+    assert.ok(groups[index][1].includes(`>${label}</span>`));
+    assert.ok(groups[index][1].includes(index===0?'>ELSE</strong>':'>BODY</strong>'));
+    assert.ok(groups[index][1].includes('data-runtime-child='));
+    assert.ok(!groups[index][1].includes('FOLLOWING STEP'));
+  }
+  assert.equal((markup.match(/class="runtime-control-gap"/g)||[]).length,3);
+  assert.match(markup, /<\/tbody><tbody class="runtime-control-gap">/);
+  assert.match(html, /\.runtime-control-group\{background:[^}]+\}/);
+  assert.match(html, /\.runtime-control-group>tr:last-child>td\{border-bottom:/);
+  assert.match(html, /\.runtime-control-gap>tr>td\{height:10px;/);
 });
 
 test('runtime status renders control progress and selects only the immutable latest failure',()=>{

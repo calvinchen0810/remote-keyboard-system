@@ -1390,9 +1390,12 @@ def _resolve_kbd_cmd(step: MixedStep, variables: Optional[dict[str, str]] = None
     # 2. 結構化欄位
     ct = (step.cmd_type or "TYPE").upper()
     if ct == "COMBO":
-        mods = [m for m in [step.mod1, step.mod2] if m]
-        key  = step.key or "C"
-        return f"COMBO:{'+'.join(mods + [key])}"
+        keys = [value.strip() for value in
+                (step.mod1, step.mod2, step.key if step.key is not None else "C")
+                if value and value.strip()]
+        if not keys:
+            raise ValueError("COMBO requires at least one key")
+        return f"COMBO:{'+'.join(keys)}"
     elif ct == "KEY":
         return f"KEY:{step.key or 'ENTER'}"
     else:  # TYPE
@@ -1499,6 +1502,17 @@ async def _script_sleep(seconds: float):
         await asyncio.sleep(min(0.05, remaining))
         remaining -= loop.time() - started
     await _await_script_resume()
+
+
+async def _evaluate_control_condition(condition_id: str) -> tuple[float, bool]:
+    await _await_script_resume()
+    script_runtime.set_phase("delay", deadline=time.time() + 1.0)
+    await _notify_runtime()
+    await _script_sleep(1.0)
+    script_runtime.set_phase("evaluating")
+    await _notify_runtime()
+    await _await_script_resume()
+    return await _evaluate_condition_fresh(condition_id)
 
 
 async def _wait_for_step_event(step: MixedStep, idx: int, total: int) -> bool:
@@ -1776,10 +1790,7 @@ async def _run_mixed_script(req: MixedScriptRequest):
                 await _await_script_resume()
 
                 if isinstance(step, IfElseBlock):
-                    script_runtime.set_phase("evaluating")
-                    await _notify_runtime()
-                    await _await_script_resume()
-                    score, matched = await _evaluate_condition_fresh(step.condition_id)
+                    score, matched = await _evaluate_control_condition(step.condition_id)
                     branch = "then_steps" if matched else "else_steps"
                     await _publish_control_decision(
                         step, i, total, score, matched, branch[:-6])
@@ -1807,11 +1818,7 @@ async def _run_mixed_script(req: MixedScriptRequest):
                             await _run_action_step(
                                 child, top_index=i, variables=variables,
                                 slot="steps", child_index=child_index)
-                        await _await_script_resume()
-                        script_runtime.set_phase("evaluating")
-                        await _notify_runtime()
-                        await _await_script_resume()
-                        score, matched = await _evaluate_condition_fresh(step.condition_id)
+                        score, matched = await _evaluate_control_condition(step.condition_id)
                         script_runtime.set_control_state(i, condition_match=matched)
                         await _notify_runtime()
                         await _await_script_resume()
@@ -1833,10 +1840,7 @@ async def _run_mixed_script(req: MixedScriptRequest):
                     script_runtime.set_control_state(
                         i, iteration_limit=step.max_iterations)
                     for current in range(1, step.max_iterations + 1):
-                        script_runtime.set_phase("evaluating")
-                        await _notify_runtime()
-                        await _await_script_resume()
-                        score, matched = await _evaluate_condition_fresh(step.condition_id)
+                        score, matched = await _evaluate_control_condition(step.condition_id)
                         should_run = (
                             matched if step.repeat_when == "match" else not matched)
                         branch = "body" if should_run else "exit"
@@ -1864,11 +1868,7 @@ async def _run_mixed_script(req: MixedScriptRequest):
                                 slot="steps", child_index=child_index)
 
                         if current == step.max_iterations:
-                            await _await_script_resume()
-                            script_runtime.set_phase("evaluating")
-                            await _notify_runtime()
-                            await _await_script_resume()
-                            score, matched = await _evaluate_condition_fresh(
+                            score, matched = await _evaluate_control_condition(
                                 step.condition_id)
                             should_run = (
                                 matched if step.repeat_when == "match" else not matched)

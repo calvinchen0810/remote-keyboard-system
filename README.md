@@ -3,6 +3,8 @@
 RKS is a FastAPI based remote input and visual-trigger automation system.
 It controls keyboard/mouse (KBM) and servo actions from a web UI or from curl script JSON.
 
+Recent changes are recorded in [CHANGELOG.md](./CHANGELOG.md).
+
 - KBM path: Computer 2 -> Nano_KB -> Pro Micro -> USB HID to Computer 1
 - SRV path: Computer 2 -> Nano_SRV -> up to 6 servos
 - Vision path: Webcam on Computer 2 -> snapshot/condition matching -> IMG.MATCH events
@@ -210,7 +212,10 @@ service ready for script input
 ### 3) Script Editor: Edit / Execution Status
 
 - **Edit** retains the local draft. **Execution Status** is a separate read-only view of submitted work and never loads steps into the draft. KBD TYPE text is shown in full (not masked), escaped as text; avoid sharing this screen if scripts contain secrets.
+- In **+ KBD / COMBO**, select **ALT** in the first slot and **TAB** or **F4** in the second slot, then clear the optional third key to send exactly **ALT+TAB** or **ALT+F4**. An explicitly empty third key is not replaced with C; legacy JSON that omits the key still defaults to C. Existing three-key combinations remain supported, and a completely empty COMBO reports an error instead of transmitting a command.
 - Execution Status shares Edit's compact toolbar, single-row job selector, TYPE/DELAY/PARAMS table, colored type badges and bottom progress row. Parameter values look like Edit fields but are selectable text, not disabled or interactive controls. A narrow status column replaces drag/delete controls. Control-flow rows show the IF match/branch or loop iteration/limit plus read-only child action states, results and errors; the progress row identifies the active child. Completed/failed counts drive the progress bar, so an active event wait is not shown as completed.
+- Execution Status displays complete IF / ELSE, DO-WHILE and WHILE labels. Each control's header, THEN/ELSE or BODY sections, child actions and child details share one background and outer border, with space below separating it from the next step. Active rows retain their execution highlight.
+- A green HH:MM:SS timer immediately left of ARCH shows the active script's elapsed time, including waiting and pauses, and updates every second even in Edit or when previewing another job. It uses the same start time as Execution Status's elapsed field and hides when no active script remains (including STOP/CLEAR).
 - Each `/script/run` submission returns a generated `job_id`. An optional top-level `name` (1-80 characters) appears in the job selector; unnamed jobs show a shortened ID. The backend cannot infer the filename used by curl `@file.json`. The editor's optional Name field is preserved on export/import.
 - **Follow Active** selects the active job as FIFO advances. Selecting a queued job turns follow off and previews immutable submitted steps without arming conditions, changing order or running anything. No job editing, reorder, delete, rerun or history database is provided.
 - The view highlights current/completed/failed/pending steps, loop iteration and waiting/recognition/location phase. EVT/IMG shows **no timeout**; remaining time applies only to bounded OCR/image search. It includes OCR results, IMAGE_MOVE centers/HID coordinates and condition name/ROI/score/threshold/hits; thumbnails use matching SNAP data when still available. Queued condition previews show inactive status and no borrowed live runtime from another job.
@@ -337,6 +342,8 @@ Bundle import behavior:
 
 Structured scripts may include non-nested `if_else`, `do_while`, and pre-test `while` nodes. Their children are ordinary action steps; blocks themselves do not count toward the limit of 200 ordinary steps across the complete script (including both IF branches). Legacy flat-step JSON remains supported.
 
+In Edit, DO-WHILE displays **DO** above its body and **WHILE** with the Condition/repeat/limit controls below the body to emphasize its post-test order. The pre-test WHILE keeps its Condition controls above the body.
+
 ```json
 {
   "schema_version": 6,
@@ -367,6 +374,7 @@ Structured scripts may include non-nested `if_else`, `do_while`, and pre-test `w
 ```
 
 - Each IF decision and each loop condition evaluates its one existing visual Condition against a fresh frame, waiting at most five seconds for that frame; failure to obtain one fails the job. The decision ignores `min_hits` and cooldown. IF selects THEN immediately on a match and ELSE otherwise.
+- Before every IF / ELSE, DO-WHILE, or WHILE Condition evaluation, the script waits one second to allow the camera image to update. This includes the initial WHILE check and its final iteration-limit check; each check has exactly one such wait. The wait supports pause/stop, appears as a delay in Execution Status, and precedes the separate five-second fresh-frame timeout.
 - A do-while body executes at least once before its first condition check. A while loop checks its condition before every body execution; if the initial condition does not match the selected `repeat_when` direction, its body executes zero times and the script continues to the next step. For both loops, `repeat_when` is `match` or `not_match` and defaults to `match`; `max_iterations` is an integer from 1 through 10,000 and defaults to 10. If the condition requires another body execution at the limit, the job fails.
 - Conditions remain ordinary existing visual Conditions; there are no compound AND/OR expressions or OCR predicates in control blocks. Blocks cannot be nested, and each IF needs at least one populated branch while each loop body must be non-empty at submission.
 - The script-wide `loop` option retains its existing whole-script behavior. Blocks and their ordinary action children are preserved by schema-6 editor exports/imports and image bundles; imported image/condition IDs are remapped through nested branches and bodies. An image-move-only bundle can remain schema 5; schema 6 is used when structured control flow is present.

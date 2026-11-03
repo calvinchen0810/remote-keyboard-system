@@ -141,10 +141,22 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .runtime-controls{display:flex;align-items:center;gap:4px;flex-wrap:wrap;row-gap:3px;padding:5px 7px;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--card);font:10px var(--mono)}
 #runtime-jobs{flex:1 1 132px;width:132px;height:22px;min-width:0;max-width:100%;background:var(--inp);color:var(--fg);font:11px var(--mono);border:1px solid var(--bd);border-radius:var(--r);padding:2px 3px}
 #runtime-meta{width:100%;overflow-wrap:anywhere;line-height:1.5;color:var(--fg2)}
+#active-elapsed{font:12px var(--mono);color:var(--grn);white-space:nowrap;font-variant-numeric:tabular-nums}
 #runtime-content{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;font:11px var(--mono)}
 #runtime-content .runtime-steps tbody tr{cursor:default}
 #runtime-content .runtime-steps td{overflow-wrap:anywhere}
-#runtime-content tr[data-runtime-state=active]{background:rgba(45,212,191,.1)}
+#runtime-content .runtime-control-group{background:rgba(45,212,191,.04)}
+#runtime-content .runtime-control-group>tr{border-bottom:0}
+#runtime-content .runtime-control-group>tr:hover{background:transparent}
+#runtime-content .runtime-control-group>tr>td:first-child{border-left:1px solid var(--bd)}
+#runtime-content .runtime-control-group>tr>td:last-child{border-right:1px solid var(--bd)}
+#runtime-content .runtime-control-group>tr:first-child>td{border-top:1px solid var(--bd)}
+#runtime-content .runtime-control-group>tr:last-child>td{border-bottom:1px solid var(--bd)}
+#runtime-content .runtime-control-group .runtime-detail-cell{background:transparent}
+#runtime-content .runtime-control-slot>td{padding-top:7px;padding-left:18px;color:var(--tel)}
+#runtime-content .runtime-control-gap>tr{border:0;background:transparent}
+#runtime-content .runtime-control-gap>tr>td{height:10px;padding:0}
+#runtime-content tr[data-runtime-state=active],#runtime-content .runtime-control-group>tr[data-runtime-state=active]{background:rgba(45,212,191,.1)}
 #runtime-content tr[data-runtime-state=active]>.runtime-mark-cell{box-shadow:inset 2px 0 var(--tel)}
 .runtime-mark{display:block;font-size:10px;color:var(--fg3);text-align:center}
 tr[data-runtime-state=active] .runtime-mark{color:var(--tel)}
@@ -160,6 +172,7 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
 .runtime-condition:after{content:'';display:block;clear:both}
 .runtime-condition .snap-thumb{float:left;margin:2px 7px 4px 0}
 #script-tb{display:flex;align-items:center;gap:4px;padding:5px 7px;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--card);flex-wrap:wrap;row-gap:3px}
+.script-flow-row{display:flex;align-items:center;gap:4px;flex-basis:100%;flex-wrap:wrap}
 #script-resume-btn[hidden]{display:none}
 #tbl-wrap{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0}
 #empty-hint{padding:14px;text-align:center;color:var(--fg3);font-family:var(--mono);font-size:10px}
@@ -366,6 +379,7 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
     <button class="btn-b btn-sm" id="kbm-conn-btn" onclick="kbmToggleConnect()">CONNECT</button>
   </div>
   <div id="sp"></div>
+  <span id="active-elapsed" title="Active script elapsed time" aria-label="Active script elapsed time" hidden></span>
   <a href="/arch" target="_blank" style="font-family:var(--mono);font-size:9px;color:var(--fg3);text-decoration:none;padding:2px 6px;border:1px solid var(--bd);border-radius:var(--r)">ARCH</a>
 </div>
 
@@ -513,9 +527,6 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
     <button class="btn-r btn-sm" onclick="addMseStep()">＋ MSE</button>
     <button class="btn-b btn-sm" onclick="addEvtStep()">＋ EVT</button>
     <button class="btn-t btn-sm" id="add-img-btn" onclick="toggleImgPicker(event)">＋ IMG</button>
-    <button class="btn-a btn-sm" onclick="addIfElseBlock()">＋ IF / ELSE</button>
-    <button class="btn-a btn-sm" onclick="addDoWhileBlock()">＋ DO-WHILE</button>
-    <button class="btn-a btn-sm" onclick="addWhileBlock()">＋ WHILE</button>
     <div style="width:1px;height:12px;background:var(--bd);margin:0 2px"></div>
     <div style="display:flex;align-items:center;gap:3px;font-family:var(--mono);font-size:9px;color:var(--fg3)">
       ms:<input type="number" id="default-delay" value="1000" min="0" max="30000" step="500"
@@ -532,13 +543,18 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
     <button class="btn-r btn-sm" onclick="stopScript()">■ STOP</button>
     <button class="btn-a btn-sm" id="script-pause-btn" onclick="pauseScript()" title="Pause the active FIFO at a safe boundary" disabled>PAUSE</button>
     <button class="btn-a btn-sm" id="script-resume-btn" onclick="resumeScript()" title="Continue the manually paused script without replaying earlier steps" hidden>RESUME</button>
+    <div class="script-flow-row" role="group" aria-label="Add control-flow blocks">
+      <button class="btn-a btn-sm" onclick="addIfElseBlock()">＋ IF / ELSE</button>
+      <button class="btn-a btn-sm" onclick="addDoWhileBlock()">＋ DO-WHILE</button>
+      <button class="btn-a btn-sm" onclick="addWhileBlock()">＋ WHILE</button>
+    </div>
   </div>
   <div id="tbl-wrap">
     <table class="stbl">
       <thead><tr>
         <th style="width:14px"></th>
         <th style="width:48px">TYPE</th>
-        <th style="width:52px">DELAY</th>
+        <th style="width:64px">DELAY</th>
         <th>PARAMS</th>
         <th style="width:24px"></th>
       </tr></thead>
@@ -1282,6 +1298,7 @@ function setRuntimeSnapshot(snapshot){
     if(runtimeDetailController)runtimeDetailController.abort();
   }
   runtimeState=snapshot;
+  updateActiveElapsed();
   renderFifoQueue();
   const jobs=runtimeJobs(),selectable=runtimeSelectableJobs();
   if(runtimeFollow)runtimeSelectedId=snapshot.active?.job_id||jobs[0]?.job_id||snapshot.last_failure?.job_id||null;
@@ -1293,6 +1310,7 @@ function setRuntimeSnapshot(snapshot){
 function resetRuntimeView(){
   runtimeDetailRequest++;if(runtimeDetailController)runtimeDetailController.abort();
   runtimeState={...runtimeState,active:null,queued:[],last_failure:null};runtimeSelectedId=null;runtimeDetailJobId=null;
+  updateActiveElapsed();
   renderFifoQueue();
   renderRuntimeJobs();
 }
@@ -1332,7 +1350,7 @@ function runtimeStepFields(params){
     const command=(params.cmd_type||'TYPE').toUpperCase();
     if(command==='TYPE')return value(command,'Command type',72)+value(params.text||'','Typed text',null,true);
     if(command==='KEY')return value(command,'Command type',72)+value(params.key||'ENTER','Key',80);
-    return value(command,'Command type',72)+value(params.mod1||'-','First modifier',54)+'<span class="cdim">+</span>'+value(params.mod2||'-','Second key',54)+'<span class="cdim">+</span>'+value(params.key||'C','Key',40);
+    return value(command,'Command type',72)+value(params.mod1||'-','First modifier',54)+'<span class="cdim">+</span>'+value(params.mod2||'-','Second key',54)+'<span class="cdim">+</span>'+value(params.key??'C','Key',40);
   }
   if(params.type==='evt')return '<span class="cdim">wait</span>'+value(params.evt||'','Event',null,true);
   if(params.type==='srv')return value(params.servo_id??1,'Servo ID',44)+value(params.angle??90,'Angle',34)+'<span class="cdim">&deg;</span>'+value(params.speed??60,'Speed',34)+value(params.duration_ms??300,'Hold milliseconds',44)+'<span class="cdim">ms H:</span>'+value(params.home??1,'Return home',24);
@@ -1415,7 +1433,7 @@ function runtimeStepText(params){
     const command=(params.cmd_type||'TYPE').toUpperCase();
     if(command==='TYPE')return 'TYPE '+(params.text||'');
     if(command==='KEY')return 'KEY '+(params.key||'ENTER');
-    return 'COMBO '+[params.mod1,params.mod2,params.key||'C'].filter(Boolean).join('+');
+    return 'COMBO '+[params.mod1,params.mod2,params.key??'C'].map(key=>(key||'').trim()).filter(Boolean).join('+');
   }
   if(params.type==='evt')return 'EVT '+(params.evt||'');
   if(params.type==='ocr')return 'OCR -> '+(params.variable||'digits')+'\nROI '+JSON.stringify(params.roi||[])+'\nSamples '+(params.stable_hits??2)+' | timeout '+(params.timeout_ms??5000)+'ms';
@@ -1437,6 +1455,12 @@ function runtimeResultText(result){
   if(result&&typeof result==='object'&&'variable' in result)return result.variable+' = '+result.value;
   if(result?.center&&result?.hid)return 'Center ('+result.center.join(', ')+')\nHID ('+result.hid.join(', ')+') | score '+result.score;
   return JSON.stringify(result);
+}
+function updateActiveElapsed(nowSeconds=Date.now()/1000){
+  const timer=document.getElementById('active-elapsed');
+  const elapsed=formatElapsed(runtimeState.active?.started_at,nowSeconds);
+  timer.textContent=elapsed??'';
+  timer.hidden=elapsed===null;
 }
 function formatElapsed(startedAt,nowSeconds=Date.now()/1000){
   if(!Number.isFinite(startedAt))return null;
@@ -1470,20 +1494,20 @@ function renderRuntimeDetail(detail){
     if(step.params.type==='if_else'||step.params.type==='do_while'||step.params.type==='while'){
       const summary=runtimeControlSummary(step);
       const label=step.params.type==='if_else'?'IF / ELSE':step.params.type==='while'?'WHILE':'DO-WHILE';
-      return `<tr data-runtime-state="${esc(step.state)}"${index===currentIndex?' aria-current="step"':''}><td class="runtime-mark-cell"><span class="runtime-mark" title="Step ${index+1}: ${esc(step.state)}">${marks[step.state]||'&#183;'}</span></td><td><span class="badge b-evt">${label}</span></td><td>${runtimeValue(step.params.delay_ms??0,String(step.params.delay_ms??0)+'ms',38)}</td><td><strong>${esc(summary)}</strong> | Condition ${runtimeValue(step.params.condition_id||'','Condition',null,true)}</td></tr>${runtimeControlRows(step)}`;
+      return `<tbody class="runtime-control-group" aria-label="${label}"><tr data-runtime-state="${esc(step.state)}"${index===currentIndex?' aria-current="step"':''}><td class="runtime-mark-cell"><span class="runtime-mark" title="Step ${index+1}: ${esc(step.state)}">${marks[step.state]||'&#183;'}</span></td><td><span class="badge b-evt">${label}</span></td><td>${runtimeValue(step.params.delay_ms??0,String(step.params.delay_ms??0)+'ms',38)}</td><td><strong>${esc(summary)}</strong> | Condition ${runtimeValue(step.params.condition_id||'','Condition',null,true)}</td></tr>${runtimeControlRows(step)}</tbody><tbody class="runtime-control-gap"><tr aria-hidden="true"><td colspan="4"></td></tr></tbody>`;
     }
     const row=`<tr data-runtime-state="${esc(step.state)}"${index===currentIndex?' aria-current="step"':''}><td class="runtime-mark-cell"><span class="runtime-mark" title="Step ${index+1}: ${esc(step.state)}">${marks[step.state]||'&#183;'}</span></td><td>${runtimeTypeBadge(step.params)}</td><td>${runtimeValue(step.params.delay_ms??0,String(step.params.delay_ms??0)+'ms',38)}</td><td><div class="runtime-fields">${runtimeStepFields(step.params)}</div></td></tr>`;
-    if(index!==currentIndex)return row;
+    if(index!==currentIndex)return `<tbody>${row}</tbody>`;
     let expanded=detail.pause?`<div class="cerr">${esc(detail.pause.message||'Manually paused')}</div>`:'';
     if(step.result!=null)expanded+=`<div class="runtime-result">${esc(runtimeResultText(step.result))}</div>`;
     if(step.error)expanded+=`<div class="cerr">${esc(step.error)}</div>`;
     if(step.params.type==='ocr')expanded+=`<div class="cdim">ROI ${esc(JSON.stringify(step.params.roi||[]))}</div>`;
     if(step.params.type==='mse'&&step.params.action==='IMAGE_MOVE')expanded+=`<pre class="runtime-param">${esc(runtimeStepText(step.params))}</pre>`;
     expanded+=conditions;
-    return row+(expanded?`<tr data-runtime-detail="${index}"><td colspan="4" class="runtime-detail-cell">${expanded}</td></tr>`:'');
+    return `<tbody>${row}${expanded?`<tr data-runtime-detail="${index}"><td colspan="4" class="runtime-detail-cell">${expanded}</td></tr>`:''}</tbody>`;
   }).join('');
   const error=detail.error?`<div class="cerr runtime-job-error">${esc(detail.error)}</div>`:'';
-  content.innerHTML=`${error}<table class="stbl runtime-steps"><thead><tr><th style="width:14px"></th><th style="width:48px">TYPE</th><th style="width:52px">DELAY</th><th>PARAMS</th></tr></thead><tbody>${rows}</tbody></table>`;
+  content.innerHTML=`${error}<table class="stbl runtime-steps"><thead><tr><th style="width:14px"></th><th style="width:92px">TYPE</th><th style="width:52px">DELAY</th><th>PARAMS</th></tr></thead>${rows}</table>`;
   renderRuntimeProgress(detail);
 }
 async function refreshRuntimeDetail(){
@@ -1607,9 +1631,10 @@ function renderControlBlock(block,index,tb){
     return `<option value="${id}"${block.condition_id===condition.condition_id?' selected':''}>${label}</option>`;
   }).join('');
   const conditionSelect=`<select class="ti-s" aria-label="Control block condition" onchange="updateControlBlock(${block._id},'condition_id',this.value)"><option value="">Choose Condition...</option>${options}</select>`;
+  const loopSettings=`${conditionSelect}<label>repeat <select class="ti-s" aria-label="Repeat when" onchange="updateControlBlock(${block._id},'repeat_when',this.value)"><option value="match"${block.repeat_when==='match'?' selected':''}>MATCH</option><option value="not_match"${block.repeat_when==='not_match'?' selected':''}>NOT MATCH</option></select></label><label>max <input class="ti" aria-label="Maximum iterations" type="number" min="1" max="10000" value="${escapeEditorAttr(block.max_iterations)}" onchange="updateControlBlock(${block._id},'max_iterations',this.value)"></label>`;
   panel.innerHTML=block.type==='if_else'
     ?`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>IF / ELSE</strong>${conditionSelect}</div>`
-    :`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>${block.type==='while'?'WHILE':'DO-WHILE'}</strong>${conditionSelect}<label>repeat <select class="ti-s" aria-label="Repeat when" onchange="updateControlBlock(${block._id},'repeat_when',this.value)"><option value="match"${block.repeat_when==='match'?' selected':''}>MATCH</option><option value="not_match"${block.repeat_when==='not_match'?' selected':''}>NOT MATCH</option></select></label><label>max <input class="ti" aria-label="Maximum iterations" type="number" min="1" max="10000" value="${escapeEditorAttr(block.max_iterations)}" onchange="updateControlBlock(${block._id},'max_iterations',this.value)"></label></div>`;
+    :`<div class="control-head"><span class="drag-col" aria-label="Drag block">⠿</span><strong>${block.type==='while'?'WHILE':'DO'}</strong>${block.type==='while'?loopSettings:''}</div>`;
   const slots=block.type==='if_else'
     ?[['then_steps','THEN'],['else_steps','ELSE']]:[['steps','BODY']];
   slots.forEach(([slot,label])=>{
@@ -1618,7 +1643,7 @@ function renderControlBlock(block,index,tb){
     drop.innerHTML=`<div class="control-slot-label">${label} · drop actions here</div>`;
     const table=document.createElement('table'),body=document.createElement('tbody');
     table.className='stbl control-slot-table';
-    table.innerHTML='<colgroup><col style="width:14px"><col style="width:48px"><col style="width:52px"><col><col style="width:22px"></colgroup>';
+    table.innerHTML='<colgroup><col style="width:14px"><col style="width:48px"><col style="width:64px"><col><col style="width:22px"></colgroup>';
     table.appendChild(body);drop.appendChild(table);
     drop.addEventListener('dragover',event=>event.preventDefault());
     drop.addEventListener('drop',event=>{
@@ -1644,6 +1669,12 @@ function renderControlBlock(block,index,tb){
     });
     drop.appendChild(end);
   });
+  if(block.type==='do_while'){
+    const footer=document.createElement('div');
+    footer.className='control-head control-condition-footer';
+    footer.innerHTML=`<strong>WHILE</strong>${loopSettings}`;
+    panel.appendChild(footer);
+  }
   cell.appendChild(panel);row.appendChild(cell);
   const deleteCell=document.createElement('td');
   deleteCell.className='control-delete-cell';
@@ -1688,8 +1719,8 @@ function renderStepList(list,tb,parentBlockId=null,parentSlot=null){
         const MODS=['','CTRL','SHIFT','ALT','WIN'];
         const mk=(cur,keys=MODS)=>keys.map(m=>`<option value="${m==='WIN'?'GUI':m}"${(m==='WIN'?'GUI':m)===cur?' selected':''}>${m||'—'}</option>`).join('');
         fields=`<select class="ti-s" style="width:54px" onchange="updStep(${s._id},'mod1',this.value)">${mk(s.mod1)}</select>+
-          <select class="ti-s" style="width:54px" onchange="updStep(${s._id},'mod2',this.value)">${mk(s.mod2,[...MODS,'F10'])}</select>+
-          <input class="ti" value="${esc(s.key||'C')}" style="width:28px;text-transform:uppercase" oninput="updStep(${s._id},'key',this.value.toUpperCase())">`;
+          <select class="ti-s" style="width:54px" onchange="updStep(${s._id},'mod2',this.value)">${mk(s.mod2,[...MODS,'TAB','F4','F10'])}</select>+
+          <input class="ti" aria-label="Third combo key" value="${esc(s.key??'C')}" title="Optional third key" style="width:28px;text-transform:uppercase" oninput="updStep(${s._id},'key',this.value.toUpperCase())">`;
       } else if(s.cmd_type==='TYPE'){
         const variables=getOcrVariables(s._id);
         fields=`<input class="ti" value="${esc(s.text||'')}" style="width:170px;max-width:100%;min-width:0" oninput="updStep(${s._id},'text',this.value)">
@@ -1726,7 +1757,7 @@ function renderStepList(list,tb,parentBlockId=null,parentSlot=null){
           (s.type==='evt'&&(s.evt||'').startsWith('IMG.MATCH.'))?'<span class="badge b-img">IMG</span>':
                    '<span class="badge b-evt">EVT</span>';
     tr.innerHTML=`<td class="drag-col">⠿</td><td>${badge}</td>
-      <td><input class="ti pop-inp" value="${s.delay_ms}" style="width:38px"
+      <td><input class="ti pop-inp" value="${s.delay_ms}" style="width:54px"
           oninput="updStep(${s._id},'delay_ms',this.value)"
           onclick="event.stopPropagation();showPop(this,'DELAY ms',0,30000,500)"></td>
       <td>${parentBlockId!==null?`<div class="step-params">${params}</div>`:params}</td>
@@ -3254,6 +3285,7 @@ kbmWSConnect();
 setInterval(refreshPorts,8000);
 refreshScriptStatus();
 setInterval(refreshScriptStatus,4000);
+setInterval(updateActiveElapsed,1000);
 setInterval(()=>{if(scriptView==='runtime')refreshScriptStatus();},1000);
 refreshCondList();
 refreshSnapList();

@@ -235,6 +235,21 @@ class ManualConditionTestEndpointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ScriptControlFlowValidationTests(unittest.TestCase):
+    def test_combo_optional_third_key_preserves_exact_command(self):
+        for second in ("TAB", "F4", "F10"):
+            for key in ("", "   "):
+                with self.subTest(second=second, key=key):
+                    step = main.MixedStep(
+                        type="kbd", cmd_type="COMBO", mod1="ALT", mod2=second, key=key)
+                    self.assertEqual(main._resolve_kbd_cmd(step), f"COMBO:ALT+{second}")
+        self.assertEqual(main._resolve_kbd_cmd(main.MixedStep(
+            type="kbd", cmd_type="COMBO", mod1="CTRL", key="C")), "COMBO:CTRL+C")
+        self.assertEqual(main._resolve_kbd_cmd(main.MixedStep(
+            type="kbd", cmd_type="COMBO", mod1="CTRL")), "COMBO:CTRL+C")
+        with self.assertRaisesRegex(ValueError, "at least one key"):
+            main._resolve_kbd_cmd(main.MixedStep(
+                type="kbd", cmd_type="COMBO", mod1="", mod2="", key=""))
+
     def test_control_nodes_validate_and_keep_action_children(self):
         request = main.MixedScriptRequest.model_validate({
             "steps": [
@@ -778,6 +793,86 @@ class MixedScriptExecutionTests(unittest.IsolatedAsyncioTestCase):
                         await main._run_mixed_script(request)
                 self.assertEqual(run_action.await_count, 1)
 
+    async def test_every_control_condition_waits_one_second_before_reading_frame(self):
+        for block_type, mode, decisions, limit in (
+            ("if_else", "match", [True], 3),
+            ("if_else", "match", [False], 3),
+            ("do_while", "match", [True, False], 3),
+            ("do_while", "not_match", [True], 1),
+            ("while", "match", [False], 3),
+            ("while", "match", [True, True, False], 3),
+            ("while", "not_match", [False, True], 1),
+            ("while", "match", [True, True], 1),
+        ):
+            with self.subTest(block_type=block_type, mode=mode, decisions=decisions):
+                events = []
+                remaining = iter(decisions)
+
+                async def evaluate(condition_id):
+                    self.assertEqual(self.runtime.detail(request.job_id)["phase"], "evaluating")
+                    events.append("check")
+                    return 0.95, next(remaining)
+
+                async def action(step, **kwargs):
+                    events.append(step.text)
+
+                async def sleep(seconds):
+                    detail = self.runtime.detail(request.job_id)
+                    self.assertEqual(detail["phase"], "delay")
+                    self.assertIsNotNone(detail["deadline"])
+                    events.append(("wait", seconds))
+
+                actions = [{"type": "kbd", "text": "first"},
+                           {"type": "kbd", "text": "last"}]
+                block = {"type": block_type, "condition_id": "door"}
+                if block_type == "if_else":
+                    block.update(then_steps=actions, else_steps=actions)
+                else:
+                    block.update(repeat_when=mode, max_iterations=limit, steps=actions)
+                request = main.MixedScriptRequest.model_validate({
+                    "steps": [block]
+                })
+                main._register_runtime_job(request)
+                self.runtime.activate(request.job_id)
+                with patch.object(main, "_evaluate_condition_fresh", side_effect=evaluate), \
+                     patch.object(main, "_run_action_step", side_effect=action), \
+                     patch.object(main, "_script_sleep", side_effect=sleep):
+                    needs_more = block_type != "if_else" and (
+                        decisions[-1] if mode == "match" else not decisions[-1])
+                    if needs_more:
+                        with self.assertRaisesRegex(RuntimeError, "iteration limit reached"):
+                            await main._run_mixed_script(request)
+                    else:
+                        await main._run_mixed_script(request)
+                if block_type == "if_else":
+                    expected = [("wait", 1.0), "check", "first", "last"]
+                elif block_type == "do_while":
+                    expected = ["first", "last", ("wait", 1.0), "check"] * len(decisions)
+                else:
+                    expected = [("wait", 1.0), "check"] + [
+                        "first", "last", ("wait", 1.0), "check"
+                    ] * (len(decisions) - 1)
+                self.assertEqual(events, expected)
+
+    async def test_while_cancellation_during_condition_delay_prevents_frame_read(self):
+        request = main.MixedScriptRequest.model_validate({
+            "steps": [{
+                "type": "while", "condition_id": "door", "repeat_when": "match",
+                "steps": [{"type": "kbd", "text": "body"}],
+            }]
+        })
+        main._register_runtime_job(request)
+        self.runtime.activate(request.job_id)
+        with patch.object(main, "_script_sleep", side_effect=asyncio.CancelledError), \
+             patch.object(main, "_run_action_step", new_callable=AsyncMock) as action, \
+             patch.object(main, "_evaluate_condition_fresh",
+                          new_callable=AsyncMock,
+                          side_effect=[(0.95, True), (0.95, False)]) as evaluate:
+            with self.assertRaises(asyncio.CancelledError):
+                await main._run_mixed_script(request)
+            evaluate.assert_not_awaited()
+            action.assert_not_awaited()
+
     async def test_while_exit_preserves_the_last_body_child_status(self):
         async def run_action(step, *, top_index, variables, slot, child_index):
             self.runtime.start_child_step(top_index, slot, child_index)
@@ -875,7 +970,7 @@ class MixedScriptExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(run_action.await_count, 2)
         main._notify_runtime.assert_awaited()
-        self.assertEqual(main._notify_runtime.await_count, 8)
+        self.assertEqual(main._notify_runtime.await_count, 10)
 
     async def test_iteration_limit_failure_stops_before_later_actions(self):
         run_action = AsyncMock()
