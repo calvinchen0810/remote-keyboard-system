@@ -1229,11 +1229,14 @@ class MixedStep(BaseModel):
     home:        Optional[int]   = Field(None, ge=0, le=1)
     # KBD — 可以直接給 cmd 字串，也可以給結構化欄位（前端 Export 格式）
     cmd:         Optional[str]   = None   # 完整指令，例如 "COMBO:CTRL+C"
-    cmd_type:    Optional[str]   = None   # "COMBO" | "TYPE" | "KEY"
+    cmd_type:    Optional[str]   = None   # "COMBO" | "TYPE" | "KEY" | "DOWN" | "UP" | "QUICK"
     mod1:        Optional[str]   = None
     mod2:        Optional[str]   = None
     key:         Optional[str]   = None
     text:        Optional[str]   = None
+    condition_id: Optional[str] = None
+    interval_ms: int = Field(default=250, ge=50, le=5000)
+    max_duration_ms: int = Field(default=8000, ge=100, le=60000)
     # MSE
     action:      Optional[str]   = None   # MOVE|MOVE_TO|CLICK|DBLCLICK|SCROLL
     btn:         Optional[str]   = None   # L|R|M
@@ -1250,6 +1253,11 @@ class MixedStep(BaseModel):
     def validate_ocr(self):
         if self.type == "ocr":
             OcrConfig.model_validate(self.model_dump())
+        if self.type == "kbd" and (self.cmd_type or "").upper() == "QUICK":
+            if self.cmd:
+                raise ValueError("QUICK CLICK cannot use a raw cmd")
+            if not (self.condition_id or "").strip():
+                raise ValueError("QUICK CLICK requires a camera condition")
         if self.type == "mse":
             action = (self.action or "MOVE").upper()
             if action not in {"MOVE", "MOVE_TO", "CLICK", "DBLCLICK", "SCROLL", "DOWN", "UP", "IMAGE_MOVE"}:
@@ -1323,6 +1331,9 @@ def _collect_condition_ids(steps: Sequence[ScriptNode]) -> list[str]:
         else:
             node_steps = [node]
         for step in node_steps:
+            if (step.type == "kbd" and (step.cmd_type or "").upper() == "QUICK"
+                    and step.condition_id):
+                condition_ids.append(step.condition_id.strip())
             evt = EventBus._normalize((step.evt or "").strip())
             if evt.startswith("IMG.MATCH."):
                 condition_ids.append(evt[len("IMG.MATCH."):])
@@ -1398,6 +1409,8 @@ def _resolve_kbd_cmd(step: MixedStep, variables: Optional[dict[str, str]] = None
         return f"COMBO:{'+'.join(keys)}"
     elif ct == "KEY":
         return f"KEY:{step.key or 'ENTER'}"
+    elif ct in ("DOWN", "UP"):
+        return f"{ct}:{step.key or 'ESC'}"
     else:  # TYPE
         return "TYPE:" + expand_variables(step.text or "", variables or {})
 
@@ -1565,6 +1578,59 @@ async def _send_kbm_command(command: str):
         cancelled.set()
 
 
+async def _release_kbm_keys() -> str:
+    loop = asyncio.get_running_loop()
+    try:
+        status = await loop.run_in_executor(executor, kb_serial.send, "RELEASEALL")
+    except Exception:
+        logger.exception("KBM RELEASEALL after script failed")
+        return "ERR"
+    if status not in ("OK", "DISCONNECTED"):
+        logger.warning(f"KBM RELEASEALL after script returned {status}")
+    return status
+
+
+async def _run_quick_click(step: MixedStep) -> dict[str, Any]:
+    condition_id = (step.condition_id or "").strip()
+    if not condition_id:
+        raise ValueError("QUICK CLICK requires a camera condition")
+    expected = f"IMG.MATCH.{condition_id}"
+    key = step.key or "ESC"
+    loop = asyncio.get_running_loop()
+    remaining = step.max_duration_ms / 1000
+    presses = 0
+
+    while remaining > 0:
+        await _await_script_resume()
+        matched = await event_bus.consume_if_available(expected)
+        if matched:
+            return {"condition_id": condition_id, "presses": presses, "matched": True}
+
+        started = loop.time()
+        result = await _send_kbm_command(f"KEY:{key}")
+        if _script_pause is None:
+            remaining -= loop.time() - started
+        if result != "OK":
+            raise RuntimeError(f"QUICK CLICK KEY:{key} failed: {result}")
+        presses += 1
+
+        wait_remaining = min(step.interval_ms / 1000, remaining)
+        while wait_remaining > 0:
+            await _await_script_resume()
+            matched = await event_bus.consume_if_available(expected)
+            if matched:
+                return {"condition_id": condition_id, "presses": presses, "matched": True}
+            started = loop.time()
+            await asyncio.sleep(min(0.025, wait_remaining))
+            if _script_pause is None:
+                elapsed = loop.time() - started
+                wait_remaining -= elapsed
+                remaining -= elapsed
+
+    raise TimeoutError(
+        f"QUICK CLICK timed out waiting for {expected} after {step.max_duration_ms} ms")
+
+
 async def _send_mouse_command(command: str):
     status = await _send_kbm_command(command)
     if status != "OK":
@@ -1680,18 +1746,24 @@ async def _run_action_step(step: MixedStep, *, top_index, variables, slot=None, 
         elif step.type == "kbd":
             runtime.set_phase("running")
             await _notify_runtime()
-            cmd = _resolve_kbd_cmd(step, variables)
-            logger.info(f"[STEP {top_index+1}/{total}] KBD {cmd}")
-            result = await _send_kbm_command(cmd)
-            if result != "OK":
-                message = f"KBD ACK: {result}"
-                note_action_error(message)
-                logger.warning(f"[STEP {top_index+1}/{total}] KBD ACK={result} cmd={cmd}")
-                await kbm_ws.broadcast({
-                    "type": "script_error",
-                    "step": top_index,
-                    "message": f"KBD step {top_index} ACK: {result} cmd: {cmd}",
-                })
+            if (step.cmd_type or "").upper() == "QUICK":
+                runtime.set_phase(
+                    "quick_click", deadline=time.time() + step.max_duration_ms / 1000)
+                await _notify_runtime()
+                step_result = await _run_quick_click(step)
+            else:
+                cmd = _resolve_kbd_cmd(step, variables)
+                logger.info(f"[STEP {top_index+1}/{total}] KBD {cmd}")
+                result = await _send_kbm_command(cmd)
+                if result != "OK":
+                    message = f"KBD ACK: {result}"
+                    note_action_error(message)
+                    logger.warning(f"[STEP {top_index+1}/{total}] KBD ACK={result} cmd={cmd}")
+                    await kbm_ws.broadcast({
+                        "type": "script_error",
+                        "step": top_index,
+                        "message": f"KBD step {top_index} ACK: {result} cmd: {cmd}",
+                    })
 
         elif step.type == "mse":
             if (step.action or "").upper() == "IMAGE_MOVE":
@@ -1937,6 +2009,7 @@ async def _script_runner():
                 await kbm_ws.broadcast({"type": "script_error", "message": str(exc), "fatal": True})
                 srv_ws.broadcast_sync({"type": "status", "state": "idle"})
             finally:
+                await _release_kbm_keys()
                 script_runtime.finish(req.job_id, failed=failed)
                 await _notify_runtime()
                 condition_manager.activate_only(None)
@@ -2309,6 +2382,11 @@ def _remap_imported_node(node: dict[str, Any], condition_map: dict[str, str]) ->
         result["steps"] = [
             _remap_imported_node(child, condition_map) for child in result.get("steps", [])
         ]
+    elif node_type == "kbd" and (result.get("cmd_type") or "").upper() == "QUICK":
+        condition_id = result.get("condition_id")
+        if condition_id not in condition_map:
+            raise HTTPException(422, f"Missing bundle Condition payload for Condition {condition_id}")
+        result["condition_id"] = condition_map[condition_id]
     else:
         event_name = EventBus._normalize(result.get("evt") or "")
         if event_name.startswith("IMG.MATCH."):

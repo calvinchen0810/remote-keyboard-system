@@ -57,6 +57,12 @@ static uint8_t findInMap(const KeyMap *map, const char *name) {
 }
 static uint8_t findMod(const char *s) { return findInMap(MOD_MAP, s); }
 static uint8_t findKey(const char *s) { return findInMap(KEY_MAP, s); }
+static uint8_t findHoldKey(const char *s) {
+  uint8_t code = findMod(s);
+  if (!code) code = findKey(s);
+  if (!code && s && strlen(s) == 1) code = (uint8_t)s[0];
+  return code;
+}
 static uint8_t mouseBtn(char c) {
   if (c=='R'||c=='r') return MOUSE_RIGHT;
   if (c=='M'||c=='m') return MOUSE_MIDDLE;
@@ -120,8 +126,8 @@ static bool processCommand(char *raw) {
     if (strlen(k)==1)    { Keyboard.press(k[0]); delay(30); Keyboard.release(k[0]); return true; }
     return false;
   }
-  if (!strncmp(raw, "DOWN:", 5))  { uint8_t c=findMod(raw+5); if(c){Keyboard.press(c);return true;} return false; }
-  if (!strncmp(raw, "UP:", 3))    { uint8_t c=findMod(raw+3); if(c){Keyboard.release(c);return true;} return false; }
+  if (!strncmp(raw, "DOWN:", 5))  { uint8_t c=findHoldKey(raw+5); if(c){Keyboard.press(c);return true;} return false; }
+  if (!strncmp(raw, "UP:", 3))    { uint8_t c=findHoldKey(raw+3); if(c){Keyboard.release(c);return true;} return false; }
   if (!strncmp(raw, "COMBO:", 6)) {
     char buf[64]; strncpy(buf, raw+6, 63); buf[63]=0;
     for (char *p=buf;*p;p++) *p=toupper(*p);

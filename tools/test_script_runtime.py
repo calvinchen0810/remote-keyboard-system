@@ -1,6 +1,8 @@
+import asyncio
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 import main
@@ -8,6 +10,96 @@ from script_runtime import ScriptRuntime
 
 
 class ScriptRuntimeTests(unittest.TestCase):
+    def test_bundle_remaps_quick_click_condition_id(self):
+        imported = {
+            "type": "kbd", "cmd_type": "QUICK", "key": "ESC",
+            "condition_id": "boot-menu-old",
+        }
+        remapped = main._remap_imported_node(imported, {"boot-menu-old": "boot-menu-new"})
+        self.assertEqual(remapped["condition_id"], "boot-menu-new")
+        self.assertEqual(main._collect_condition_ids([main.MixedStep.model_validate(remapped)]),
+                         ["boot-menu-new"])
+
+    def test_kbd_hold_modes_resolve_to_down_and_up_commands(self):
+        down = main.MixedStep(type="kbd", cmd_type="DOWN", key="ESC")
+        up = main.MixedStep(type="kbd", cmd_type="UP", key="ESC")
+        self.assertEqual(main._resolve_kbd_cmd(down), "DOWN:ESC")
+        self.assertEqual(main._resolve_kbd_cmd(up), "UP:ESC")
+
+    def test_release_kbm_keys_sends_releaseall(self):
+        with patch.object(main.kb_serial, "send", return_value="OK") as send:
+            result = asyncio.run(main._release_kbm_keys())
+        self.assertEqual(result, "OK")
+        send.assert_called_once_with("RELEASEALL")
+
+    def test_quick_click_repeats_until_its_image_match_event(self):
+        step = main.MixedStep(
+            type="kbd", cmd_type="QUICK", key="ESC", condition_id="boot-menu",
+            interval_ms=50, max_duration_ms=100,
+        )
+        commands = []
+
+        async def send(command):
+            commands.append(command)
+            if len(commands) == 2:
+                await main.event_bus.emit("IMG.MATCH.boot-menu")
+            return "OK"
+
+        async def skip_interval(_seconds):
+            return None
+
+        async def run():
+            await main.event_bus.clear()
+            with patch.object(main, "_send_kbm_command", side_effect=send), \
+                 patch.object(main, "_script_sleep", side_effect=skip_interval):
+                return await main._run_quick_click(step)
+
+        result = asyncio.run(run())
+        self.assertEqual(commands, ["KEY:ESC", "KEY:ESC"])
+        self.assertEqual(result, {"condition_id": "boot-menu", "presses": 2, "matched": True})
+
+    def test_quick_click_stops_after_maximum_duration_without_match(self):
+        step = main.MixedStep(
+            type="kbd", cmd_type="QUICK", key="ESC", condition_id="boot-menu",
+            interval_ms=50, max_duration_ms=100,
+        )
+        commands = []
+
+        async def send(command):
+            commands.append(command)
+            return "OK"
+
+        async def skip_interval(_seconds):
+            return None
+
+        async def run():
+            await main.event_bus.clear()
+            with patch.object(main, "_send_kbm_command", side_effect=send), \
+                 patch.object(main, "_script_sleep", side_effect=skip_interval):
+                await main._run_quick_click(step)
+
+        with self.assertRaisesRegex(TimeoutError, "boot-menu"):
+            asyncio.run(run())
+        self.assertEqual(commands, ["KEY:ESC", "KEY:ESC"])
+
+    def test_quick_click_condition_is_armed_with_the_script(self):
+        step = main.MixedStep(
+            type="kbd", cmd_type="QUICK", key="ESC", condition_id="boot-menu",
+        )
+        self.assertEqual(main._collect_condition_ids([step]), ["boot-menu"])
+
+    def test_quick_click_requires_condition_and_bounded_timing(self):
+        invalid_steps = (
+            {"type": "kbd", "cmd_type": "QUICK", "key": "ESC"},
+            {"type": "kbd", "cmd_type": "QUICK", "key": "ESC",
+             "condition_id": "boot-menu", "interval_ms": 49},
+            {"type": "kbd", "cmd_type": "QUICK", "key": "ESC",
+             "condition_id": "boot-menu", "max_duration_ms": 60001},
+        )
+        for step in invalid_steps:
+            with self.subTest(step=step), self.assertRaises(main.ValidationError):
+                main.MixedStep.model_validate(step)
+
     def test_jobs_have_unique_ids_and_fifo_order_without_exposing_steps_in_status(self):
         runtime = ScriptRuntime()
         first = runtime.enqueue(name="A", steps=[{"type": "evt", "evt": "HELLO"}], loop=False, condition_ids=[])

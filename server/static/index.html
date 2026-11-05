@@ -190,6 +190,8 @@ tr[data-runtime-state=failed] .runtime-mark{color:var(--red)}
 .control-slot-table .step-params{display:flex;align-items:center;gap:2px;overflow-x:auto}
 .step-params>span{flex-wrap:nowrap!important;flex-shrink:0}
 .step-params>select{flex-shrink:0}
+.quick-click-editor{display:flex;flex-direction:column;align-items:flex-start;gap:3px;max-width:100%;overflow-x:auto}
+.quick-click-row{display:flex;align-items:center;gap:4px;flex-wrap:nowrap;white-space:nowrap}
 .control-slot-table:empty{display:none}
 #block-delete-dialog:not([hidden]){position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:16px}
 .block-delete-card{display:flex;flex-direction:column;gap:8px;min-width:240px;padding:16px;background:var(--card);border:1px solid var(--br);box-shadow:0 8px 32px #000}
@@ -1087,24 +1089,34 @@ function resolveBlockDelete(choice){
 }
 function validateControlFlowNodes(nodes){
   let actionCount=0;
+  const validateQuickClick=step=>{
+    if(step.type!=='kbd'||(step.cmd_type||'').toUpperCase()!=='QUICK')return;
+    if(!step.condition_id||!conditions.some(condition=>condition.condition_id===step.condition_id))throw new Error('Choose a camera condition for Quick Click.');
+    if(!KBD_SPECIAL_KEYS.includes(step.key||'ESC'))throw new Error('Choose a valid Quick Click key.');
+    if(!Number.isInteger(step.interval_ms??250)||(step.interval_ms??250)<50||(step.interval_ms??250)>5000)throw new Error('Quick Click interval must be 50-5000 ms.');
+    if(!Number.isInteger(step.max_duration_ms??8000)||(step.max_duration_ms??8000)<100||(step.max_duration_ms??8000)>60000)throw new Error('Quick Click maximum time must be 100-60000 ms.');
+  };
   for(const node of nodes){
     if(node.type==='if_else'){
       if(!node.condition_id||!conditions.some(condition=>condition.condition_id===node.condition_id))throw new Error('Choose a valid Condition for IF / ELSE.');
       if(!node.then_steps?.length&&!node.else_steps?.length)throw new Error('IF / ELSE needs at least one step.');
+      [...node.then_steps,...node.else_steps].forEach(validateQuickClick);
       actionCount+=node.then_steps.length+node.else_steps.length;
     } else if(node.type==='do_while'){
       if(!node.condition_id||!conditions.some(condition=>condition.condition_id===node.condition_id))throw new Error('Choose a valid Condition for DO-WHILE.');
       if(!node.steps?.length)throw new Error('DO-WHILE needs at least one step.');
       if(!['match','not_match'].includes(node.repeat_when))throw new Error('Choose a valid DO-WHILE repeat direction.');
       if(!Number.isInteger(node.max_iterations)||node.max_iterations<1||node.max_iterations>10000)throw new Error('DO-WHILE limit must be from 1 to 10000.');
+      node.steps.forEach(validateQuickClick);
       actionCount+=node.steps.length;
     } else if(node.type==='while'){
       if(!node.condition_id||!conditions.some(condition=>condition.condition_id===node.condition_id))throw new Error('Choose a valid Condition for WHILE.');
       if(!node.steps?.length)throw new Error('WHILE needs at least one step.');
       if(!['match','not_match'].includes(node.repeat_when))throw new Error('Choose a valid WHILE repeat direction.');
       if(!Number.isInteger(node.max_iterations)||node.max_iterations<1||node.max_iterations>10000)throw new Error('WHILE limit must be from 1 to 10000.');
+      node.steps.forEach(validateQuickClick);
       actionCount+=node.steps.length;
-    } else actionCount++;
+    } else {validateQuickClick(node);actionCount++;}
     if(actionCount>200)throw new Error('A script can contain at most 200 action steps.');
   }
 }
@@ -1117,6 +1129,11 @@ function serializeEditorSteps(nodes){
     if(node.type==='while')return {...node,steps:serializeEditorSteps(node.steps||[])};
     return node;
   });
+}
+function containsQuickClick(nodes){
+  return (nodes||[]).some(node=>node.type==='kbd'&&(node.cmd_type||'').toUpperCase()==='QUICK'||
+    (node.type==='if_else'&&(containsQuickClick(node.then_steps)||containsQuickClick(node.else_steps)))||
+    (['do_while','while'].includes(node.type)&&containsQuickClick(node.steps)));
 }
 function escapeEditorAttr(value){return esc(value).replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 
@@ -1349,7 +1366,8 @@ function runtimeStepFields(params){
     if(params.cmd)return value(params.cmd,'Raw command',null,true);
     const command=(params.cmd_type||'TYPE').toUpperCase();
     if(command==='TYPE')return value(command,'Command type',72)+value(params.text||'','Typed text',null,true);
-    if(command==='KEY')return value(command,'Command type',72)+value(params.key||'ENTER','Key',80);
+    if(command==='QUICK')return value('QUICK CLICK','Command type',90)+value(params.key||'ESC','Key',52)+value(params.condition_id||'','Camera condition',100)+value(params.interval_ms??250,'Interval',52)+'<span class="cdim">ms</span>'+value(params.max_duration_ms??8000,'Maximum time',60)+'<span class="cdim">ms</span>';
+    if(['KEY','DOWN','UP'].includes(command))return value(command,'Command type',72)+value(params.key||(command==='KEY'?'ENTER':'ESC'),'Key',80);
     return value(command,'Command type',72)+value(params.mod1||'-','First modifier',54)+'<span class="cdim">+</span>'+value(params.mod2||'-','Second key',54)+'<span class="cdim">+</span>'+value(params.key??'C','Key',40);
   }
   if(params.type==='evt')return '<span class="cdim">wait</span>'+value(params.evt||'','Event',null,true);
@@ -1432,7 +1450,9 @@ function runtimeStepText(params){
     if(params.cmd)return params.cmd;
     const command=(params.cmd_type||'TYPE').toUpperCase();
     if(command==='TYPE')return 'TYPE '+(params.text||'');
+    if(command==='QUICK')return `QUICK CLICK ${params.key||'ESC'} | ${params.condition_id||'no condition'} every ${params.interval_ms??250}ms max ${params.max_duration_ms??8000}ms`;
     if(command==='KEY')return 'KEY '+(params.key||'ENTER');
+    if(command==='DOWN'||command==='UP')return command+' '+(params.key||'ESC');
     return 'COMBO '+[params.mod1,params.mod2,params.key??'C'].map(key=>(key||'').trim()).filter(Boolean).join('+');
   }
   if(params.type==='evt')return 'EVT '+(params.evt||'');
@@ -1712,8 +1732,9 @@ function renderStepList(list,tb,parentBlockId=null,parentSlot=null){
         <input class="ti" aria-label="OCR stable samples" title="Consecutive matching captures" type="number" min="1" max="10" value="${s.stable_hits??2}" style="width:32px" oninput="updStep(${s._id},'stable_hits',this.value)">
         <span style="font-size:9px;color:var(--fg3)">samples</span></span>`;
     } else if(s.type==='kbd'){
-      const types=['COMBO','TYPE','KEY'];
-      const tsel=types.map(t=>`<option${t===s.cmd_type?' selected':''}>${t}</option>`).join('');
+      const types=[['COMBO','COMBO'],['TYPE','TYPE'],['KEY','KEY'],['DOWN','DOWN'],['UP','UP'],['QUICK','REPEAT']];
+      const tsel=types.map(([value,label])=>`<option value="${value}"${value===s.cmd_type?' selected':''}>${label}</option>`).join('');
+      const typeSelect=`<select class="ti-s" style="width:72px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>`;
       let fields='';
       if(s.cmd_type==='COMBO'){
         const MODS=['','CTRL','SHIFT','ALT','WIN'];
@@ -1725,10 +1746,20 @@ function renderStepList(list,tb,parentBlockId=null,parentSlot=null){
         const variables=getOcrVariables(s._id);
         fields=`<input class="ti" value="${esc(s.text||'')}" style="width:170px;max-width:100%;min-width:0" oninput="updStep(${s._id},'text',this.value)">
           <select class="ti-s" aria-label="Insert OCR variable" style="width:106px" onchange="insertKbdVariable(${s._id},this.value)"><option value="">Variable...</option>${variables.map(name=>`<option value="${escapeEditorAttr(name)}">${esc(name)}</option>`).join('')}</select>`;
+      } else if(s.cmd_type==='QUICK'){
+        const conditionOptions=conditions.map(condition=>`<option value="${escapeEditorAttr(condition.condition_id)}"${condition.condition_id===s.condition_id?' selected':''}>${esc(condition.name||condition.condition_id)}</option>`).join('');
+        const conditionSelect=`<select class="ti-s" aria-label="Quick Click camera condition" title="Camera condition" style="width:110px" onchange="updStep(${s._id},'condition_id',this.value)"><option value="">Condition...</option>${conditionOptions}</select>`;
+        const keySelect=`<select class="ti-s" aria-label="Quick Click key" style="width:72px" onchange="updStep(${s._id},'key',this.value)">${KBD_SPECIAL_KEYS.map(key=>`<option${key===(s.key||'ESC')?' selected':''}>${key}</option>`).join('')}</select>`;
+        params=`<div class="quick-click-editor"><div class="quick-click-row">${typeSelect}${conditionSelect}</div>
+          <div class="quick-click-row">${keySelect}
+            <label style="display:inline-flex;align-items:center;gap:2px"><span>every</span><input class="ti" aria-label="Quick Click interval ms" type="number" min="50" max="5000" step="50" value="${s.interval_ms??250}" style="width:48px" oninput="updStep(${s._id},'interval_ms',this.value)">ms</label>
+            <label style="display:inline-flex;align-items:center;gap:2px"><span>max</span><input class="ti" aria-label="Quick Click maximum ms" type="number" min="100" max="60000" step="500" value="${s.max_duration_ms??8000}" style="width:52px" oninput="updStep(${s._id},'max_duration_ms',this.value)">ms</label>
+          </div></div>`;
       } else {
-        fields=`<select class="ti-s" style="width:80px" onchange="updStep(${s._id},'key',this.value)">${KBD_SPECIAL_KEYS.map(k=>`<option${k===(s.key||'ENTER')?' selected':''}>${k}</option>`).join('')}</select>`;
+        const defaultKey=s.cmd_type==='DOWN'||s.cmd_type==='UP'?'ESC':'ENTER';
+        fields=`<select class="ti-s" aria-label="${s.cmd_type==='DOWN'?'Press and hold key':s.cmd_type==='UP'?'Release key':'Key'}" style="width:80px" onchange="updStep(${s._id},'key',this.value)">${KBD_SPECIAL_KEYS.map(k=>`<option${k===(s.key||defaultKey)?' selected':''}>${k}</option>`).join('')}</select>`;
       }
-      params=`<select class="ti-s" style="width:72px" onchange="updStepKbd(${s._id},this.value)">${tsel}</select>
+      if(s.cmd_type!=='QUICK')params=`${typeSelect}
         <span style="display:inline-flex;align-items:center;gap:2px;margin-left:2px;flex-wrap:wrap;max-width:100%">${fields}</span>`;
     } else {
       const ACTS=['MOVE','MOVE_TO','CLICK','DBLCLICK','SCROLL','IMAGE_MOVE'];
@@ -1781,12 +1812,17 @@ function renderStepList(list,tb,parentBlockId=null,parentSlot=null){
     tb.appendChild(tr);
   });
 }
-function updStep(id,key,val){const s=findStepLocation(id)?.step;if(!s||['if_else','do_while','while'].includes(s.type))return reportEditorError('Action step no longer exists.');const nk=['delay_ms','servo_id','angle','speed','duration_ms','home','x','y','amount','timeout_ms','stable_hits'];s[key]=nk.includes(key)?parseInt(val)||0:val;}
+function updStep(id,key,val){const s=findStepLocation(id)?.step;if(!s||['if_else','do_while','while'].includes(s.type))return reportEditorError('Action step no longer exists.');const nk=['delay_ms','servo_id','angle','speed','duration_ms','home','x','y','amount','timeout_ms','stable_hits','interval_ms','max_duration_ms'];s[key]=nk.includes(key)?parseInt(val)||0:val;}
 function updStepKbd(id,t){
   const s=findStepLocation(id)?.step;
   if(!s||s.type!=='kbd')return reportEditorError('Keyboard step no longer exists.');
   s.cmd_type=t;
   if(t==='KEY'&&!KBD_SPECIAL_KEYS.includes(s.key))s.key='ENTER';
+  if((t==='DOWN'||t==='UP')&&!KBD_SPECIAL_KEYS.includes(s.key))s.key='ESC';
+  if(t==='QUICK'){
+    if(!KBD_SPECIAL_KEYS.includes(s.key))s.key='ESC';
+    s.interval_ms??=250;s.max_duration_ms??=8000;s.delay_ms=0;
+  }
   renderSteps();
 }
 function updStepMse(id,t){const s=findStepLocation(id)?.step;if(!s||s.type!=='mse')return reportEditorError('Mouse step no longer exists.');if(t==='IMAGE_MOVE'){editImageMoveStep(id);return;}s.action=t;renderSteps();}
@@ -1806,6 +1842,8 @@ function collectImgBundle(){
       } else if(node.type==='do_while'||node.type==='while'){
         addCondition(node.condition_id);
         visit(node.steps);
+      } else if(node.type==='kbd'&&(node.cmd_type||'').toUpperCase()==='QUICK'){
+        addCondition(node.condition_id);
       } else {
         const evt=(node.evt||'').trim();
         const normalizedEvt=evt.toUpperCase().startsWith('EVT:')?evt.slice(4).trim():evt;
@@ -1845,9 +1883,10 @@ function exportJSON(){
     .sort((a,b)=>parseInt(a[0])-parseInt(b[0]))
     .map(([sid,pin])=>`ATTACH ${sid} ${pin}`);
   const img=collectImgBundle();
+  const hasQuickClick=containsQuickClick(out);
   const hasControlFlow=out.some(step=>['if_else','do_while','while'].includes(step.type));
   const payload={
-    schema_version:hasControlFlow?6:(out.some(step=>step.type==='mse'&&step.action==='IMAGE_MOVE')?5:(out.some(step=>step.type==='ocr')?3:(img.bundle.conditions.length?2:1))),
+    schema_version:hasQuickClick?7:(hasControlFlow?6:(out.some(step=>step.type==='mse'&&step.action==='IMAGE_MOVE')?5:(out.some(step=>step.type==='ocr')?3:(img.bundle.conditions.length?2:1)))),
     name:document.getElementById('script-name').value.trim()||null,
     loop:document.getElementById('loop-cb').checked,
     servos:attachedMap,

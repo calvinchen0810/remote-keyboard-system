@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-11-05 - Pro Micro HID and Quick Click
+
+### Added
+
+- Add the alternative `arduino/pro_micro_hid/pro_micro_hid.ino` sketch for
+  JSON keyboard/mouse actions over USB Serial while preserving the Nano_KB
+  `Serial1` protocol. Document the required ArduinoJson 7.x library and limits.
+- Add KBD `REPEAT` mode to Script Editor. It sends short key taps at a configured
+  interval until the selected camera condition matches or the maximum duration
+  expires. Stop and script cleanup send `RELEASEALL`.
+- Allow `DOWN:<key>` / `UP:<key>` to hold and release mapped non-modifier keys,
+  including ESC, in both Pro Micro sketches.
+
+### Fixed
+
+- Remap the QUICK step's camera condition ID when importing an image bundle, so
+  the step references the newly imported condition instead of its stale source ID.
+
+### Tests
+
+- Verification: 87 Script Editor tests, 16 script runtime tests, 48 control-flow
+  tests, 7 camera enumeration tests and 5 Pro Micro protocol tests pass.
+- Python syntax checks and `git diff --check` pass. The Pro Micro sketches were
+  not compiled with an Arduino toolchain or tested on hardware in this update.
+
 ## 2026-11-03 - Script controls and execution status refinements
 
 ### Changed

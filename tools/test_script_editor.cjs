@@ -222,6 +222,72 @@ test('COMBO supports TAB and F4 in the second slot with an empty third key', () 
   }
 });
 
+test('KBD DOWN and UP modes select ESC and show the held-key command', () => {
+  const editor = createEditor();
+  editor.addKbdStep();
+  const step = editor.steps[0];
+
+  editor.updStepKbd(step._id, 'DOWN');
+  assert.equal(step.key, 'ESC');
+  assert.equal(editor.runtimeStepText(step), 'DOWN ESC');
+  editor.renderSteps();
+  assert.match(editor.renderedRows[0].innerHTML, /<option>DOWN<\/option>/);
+  assert.match(editor.renderedRows[0].innerHTML, /<option>UP<\/option>/);
+  assert.match(editor.renderedRows[0].innerHTML, /<option selected>ESC<\/option>/);
+
+  editor.updStepKbd(step._id, 'UP');
+  assert.equal(step.key, 'ESC');
+  assert.equal(editor.runtimeStepText(step), 'UP ESC');
+  assert.match(editor.runtimeStepFields(step), /UP/);
+  assert.match(editor.runtimeStepFields(step), /ESC/);
+});
+
+test('KBD Quick Click captures interval, timeout, and condition in its bundle', () => {
+  const editor = createEditor();
+  editor.conditions = [{ condition_id: 'boot-menu', name: 'Boot menu', snapshot_id: 'boot-snap',
+    roi: [0, 0, 1, 1], threshold: 0.9, min_hits: 1, cooldown_ms: 0 }];
+  editor.snapshots = [{ id: 'boot-snap', thumb_b64: 'c25hcA==' }];
+  editor.addKbdStep();
+  const step = editor.steps[0];
+
+  editor.updStepKbd(step._id, 'QUICK');
+  editor.updStep(step._id, 'condition_id', 'boot-menu');
+  editor.updStep(step._id, 'interval_ms', 250);
+  editor.updStep(step._id, 'max_duration_ms', 8000);
+  editor.renderSteps();
+
+  assert.equal(step.key, 'ESC');
+  assert.equal(step.delay_ms, 0);
+  assert.equal(editor.runtimeStepText(step), 'QUICK CLICK ESC | boot-menu every 250ms max 8000ms');
+  const markup = editor.renderedRows[0].innerHTML;
+  assert.match(markup, /<option value="QUICK" selected>REPEAT<\/option>/);
+  assert.equal((markup.match(/class="quick-click-row"/g)||[]).length, 2);
+  assert.match(markup, /quick-click-row[^]*value="boot-menu"/);
+  assert.match(markup, /quick-click-row[^]*aria-label="Quick Click key"/);
+  assert.match(editor.renderedRows[0].innerHTML, /250/);
+  assert.match(editor.renderedRows[0].innerHTML, /8000/);
+  assert.deepEqual(Array.from(editor.collectImgBundle().conditionIds), ['boot-menu']);
+  editor.exportJSON();
+  const payload = JSON.parse(editor.exportData.value);
+  assert.equal(payload.schema_version, 7);
+  assert.equal(payload.steps[0].cmd_type, 'QUICK');
+  assert.equal(payload.steps[0].condition_id, 'boot-menu');
+
+  const block = editor.addWhileBlock('boot-menu');
+  editor.moveStepToSlot(step._id, block._id, 'steps');
+  editor.exportJSON();
+  const nestedPayload = JSON.parse(editor.exportData.value);
+  assert.equal(nestedPayload.schema_version, 7);
+  assert.equal(nestedPayload.steps[0].steps[0].cmd_type, 'QUICK');
+});
+
+test('KBD Quick Click refuses to run without a saved camera condition', () => {
+  const editor = createEditor();
+  editor.addKbdStep();
+  editor.updStepKbd(editor.steps[0]._id, 'QUICK');
+  assert.throws(() => editor.validateControlFlowNodes(editor.steps), /camera condition/);
+});
+
 test('flow block buttons occupy a separate toolbar row after execution controls', () => {
   const toolbar = html.slice(html.indexOf('<div id="script-tb">'), html.indexOf('<div id="tbl-wrap">'));
   const row = toolbar.slice(toolbar.indexOf('<div class="script-flow-row"'));

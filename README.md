@@ -77,6 +77,7 @@ Build each sketch separately in Arduino IDE. The `.ino` file must remain in a fo
 | `arduino/nano_keyboard/nano_keyboard.ino` | **Arduino AVR Boards** -> **Arduino Nano**; choose the processor/bootloader option matching the Nano | `SoftwareSerial` is included with the AVR platform; no extra library |
 | `arduino/nano_servo/nano_servo.ino` | **Arduino AVR Boards** -> **Arduino Nano**; choose the processor/bootloader option matching the Nano | **Servo** from Arduino Library Manager |
 | `arduino/pro_micro/pro_micro.ino` | **SparkFun AVR Boards** -> **Pro Micro**; select 5V/16MHz or 3.3V/8MHz to match the physical board | **HID-Project 2.8.4** by NicoHood; `Keyboard` and `Mouse` come with the AVR board platform |
+| `arduino/pro_micro_hid/pro_micro_hid.ino` | **SparkFun AVR Boards** -> **Pro Micro**; select 5V/16MHz or 3.3V/8MHz to match the physical Pro Micro | **HID-Project 2.8.4** by NicoHood and **ArduinoJson 7.x**; `Keyboard` and `Mouse` come with the AVR board platform |
 
 ### Install Board Packages and Libraries
 
@@ -87,12 +88,18 @@ Build each sketch separately in Arduino IDE. The `.ino` file must remain in a fo
   ```
 
 2. In **Boards Manager**, install **Arduino AVR Boards** and **SparkFun AVR Boards**.
-3. In **Library Manager**, install **Servo** and **HID-Project**. For this firmware, use HID-Project **2.8.4** or the project-tested version.
+3. In **Library Manager**, install **Servo**, **HID-Project**, and **ArduinoJson 7.x**. For the Pro Micro sketches, use HID-Project **2.8.4** or the project-tested version.
 4. Open each sketch from its matching folder, select the board options from the table, then choose **Verify** to compile or **Upload** to flash it.
 
 The Pro Micro sketch requires an ATmega32U4 target. Do not select Arduino Nano/Uno for it; those boards do not provide `Serial1` or the USB HID keyboard/mouse interfaces used by the sketch. The selected voltage/clock must also match the physical Pro Micro.
 
 After flashing, use the baud rate listed above for each USB serial connection. Close Arduino Serial Monitor before starting the RKS server if it is using the same COM port.
+
+### Pro Micro JSON HID Sketch
+
+`arduino/pro_micro_hid/pro_micro_hid.ino` is an alternative Pro Micro sketch. It accepts one JSON object per line over the Pro Micro USB serial interface and returns `OK` or `ERR:<reason>`. The JSON `actions` array supports `text`, `key`, `combo`, `delay`, `mouse_move`, `mouse_scroll`, `mouse_click`, `mouse_press`, and `mouse_release`; each line is limited to 767 bytes and 16 actions. USB lines not beginning with `{` keep the existing event-forwarding behavior. The Nano_KB connection on `Serial1` retains the existing RKS text command protocol at 38400 baud.
+
+Connect the Pro Micro USB to the target PC for HID and JSON serial. This USB serial port is also the JSON protocol channel, so do not use Serial Monitor at the same time. Connect the Nano_KB to the controller PC as before. The sketch runs each JSON action list synchronously; while it is running, commands arriving from Nano_KB wait until the list finishes. Pin 7 can be connected to GND as a kill input; leave it unconnected for normal operation.
 
 ---
 
@@ -607,7 +614,7 @@ curl.exe http://127.0.0.1:8000/script/status
 
 - `TYPE:<text>`
 - `KEY:<name>` (ENTER ESC BACKSPACE TAB DELETE F1~F12 ...)
-- `DOWN:<mod>` / `UP:<mod>` where mod in `CTRL SHIFT ALT GUI`
+- `DOWN:<key>` / `UP:<key>` hold or release a modifier, mapped key (for example `ESC`), or single character; modifiers include `CTRL SHIFT ALT GUI`
 - `COMBO:<m>+<k>`
 - `RELEASEALL`
 - `MOUSE:MOVE dx dy`
@@ -618,6 +625,10 @@ curl.exe http://127.0.0.1:8000/script/status
 - `MOUSE:SCROLL n`
 - `PING`
 - `EVT:<name>`
+
+For a boot-menu sequence, add a KBD `DOWN` step for `ESC`, wait for the camera's boot-menu `IMG.MATCH` event, then add a KBD `UP` step for `ESC`. Script completion, failure, or stop sends `RELEASEALL` as a final safeguard.
+
+For startup timing where a single ESC tap may be missed, choose KBD `QUICK CLICK`, select the boot-menu camera condition and key, then set the tap interval and maximum duration. It sends a normal short `KEY:<name>` press at each interval, stops as soon as the condition's `IMG.MATCH` arrives, and fails safely at the maximum duration. STOP also cancels it and releases all keys. QUICK CLICK is exported as script schema version 7 and bundles its selected camera condition and snapshot.
 
 ---
 
